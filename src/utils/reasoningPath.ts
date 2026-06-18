@@ -1,21 +1,15 @@
-import type { ReasoningPath, KeywordMaskStatus } from '@/store/projectStore'
+import type { ReasoningPath, SegmentMaskResult, KeywordMaskStatus } from '@/store/projectStore'
+import { getGlobalAudibleFragments } from './noiseMasking'
 
-export function generateReasoningPaths(
-  keywordMasks: KeywordMaskStatus[],
+export function generateReasoningPathsFromMasks(
+  segmentMasks: SegmentMaskResult[],
   correctAnswer: string,
   misleadingAnswers: string[]
 ): ReasoningPath[] {
-  const clearKeywords = keywordMasks
-    .filter((m) => m.level === 'clear')
-    .map((m) => m.keyword)
-  const partialKeywords = keywordMasks
-    .filter((m) => m.level === 'partial')
-    .map((m) => m.keyword)
-  const maskedKeywords = keywordMasks
-    .filter((m) => m.level === 'masked')
-    .map((m) => m.keyword)
+  const { clear, partial } = getGlobalAudibleFragments(segmentMasks)
+  const { masked } = getGlobalAudibleFragments(segmentMasks)
 
-  const audibleFragments = [...clearKeywords, ...partialKeywords]
+  const audibleFragments = [...clear, ...partial]
   const paths: ReasoningPath[] = []
   let pathId = 0
 
@@ -38,18 +32,21 @@ export function generateReasoningPaths(
 
   for (const misleading of misleadingAnswers) {
     if (!misleading) continue
-    const fragmentPool = [...audibleFragments, ...maskedKeywords.slice(0, 2)]
+    const fragmentPool = [...audibleFragments, ...masked.slice(0, 2)]
     if (fragmentPool.length === 0) continue
 
     const numFragments = 2 + Math.floor(Math.random() * 2)
     const fragments: string[] = []
-    for (let i = 0; i < numFragments && i < fragmentPool.length; i++) {
-      const idx = Math.floor(Math.random() * fragmentPool.length)
-      fragments.push(fragmentPool.splice(idx, 1)[0])
+    const availablePool = [...fragmentPool]
+    for (let i = 0; i < numFragments && availablePool.length > 0; i++) {
+      const idx = Math.floor(Math.random() * availablePool.length)
+      fragments.push(availablePool.splice(idx, 1)[0])
     }
 
     const steps = buildReasoningSteps(fragments, misleading)
-    steps.push(`基于片段"${fragments[fragments.length - 1] || '?'}"的误读，推断出"${misleading}"`)
+    if (fragments.length > 0) {
+      steps.push(`基于片段"${fragments[fragments.length - 1]}"的误读，推断出"${misleading}"`)
+    }
 
     paths.push({
       id: `path_${pathId++}`,
@@ -90,4 +87,86 @@ function buildReasoningSteps(fragments: string[], conclusion: string): string[] 
   steps.push(`综合线索，指向结论："${conclusion}"`)
 
   return steps
+}
+
+export function getMaskLevelCounts(
+  masks: KeywordMaskStatus[]
+): { masked: number; partial: number; clear: number } {
+  return {
+    masked: masks.filter((m) => m.level === 'masked').length,
+    partial: masks.filter((m) => m.level === 'partial').length,
+    clear: masks.filter((m) => m.level === 'clear').length,
+  }
+}
+
+export function generateReasoningPaths(
+  keywordMasks: KeywordMaskStatus[],
+  correctAnswer: string,
+  misleadingAnswers: string[]
+): ReasoningPath[] {
+  const clear = keywordMasks.filter((m) => m.level === 'clear').map((m) => m.keyword)
+  const partial = keywordMasks.filter((m) => m.level === 'partial').map((m) => m.keyword)
+  const masked = keywordMasks.filter((m) => m.level === 'masked').map((m) => m.keyword)
+
+  const audibleFragments = [...clear, ...partial]
+  const paths: ReasoningPath[] = []
+  let pathId = 0
+
+  if (correctAnswer && audibleFragments.length > 0) {
+    const numCorrectPaths = Math.min(3, audibleFragments.length)
+    for (let i = 0; i < numCorrectPaths; i++) {
+      const startIdx = i
+      const fragments = audibleFragments.slice(startIdx, startIdx + 3)
+      const steps = buildReasoningSteps(fragments, correctAnswer)
+      paths.push({
+        id: `path_${pathId++}`,
+        fragments,
+        conclusion: correctAnswer,
+        isCorrect: true,
+        steps,
+        difficulty: fragments.length,
+      })
+    }
+  }
+
+  for (const misleading of misleadingAnswers) {
+    if (!misleading) continue
+    const fragmentPool = [...audibleFragments, ...masked.slice(0, 2)]
+    if (fragmentPool.length === 0) continue
+
+    const numFragments = 2 + Math.floor(Math.random() * 2)
+    const fragments: string[] = []
+    const availablePool = [...fragmentPool]
+    for (let i = 0; i < numFragments && availablePool.length > 0; i++) {
+      const idx = Math.floor(Math.random() * availablePool.length)
+      fragments.push(availablePool.splice(idx, 1)[0])
+    }
+
+    const steps = buildReasoningSteps(fragments, misleading)
+    if (fragments.length > 0) {
+      steps.push(`基于片段"${fragments[fragments.length - 1]}"的误读，推断出"${misleading}"`)
+    }
+
+    paths.push({
+      id: `path_${pathId++}`,
+      fragments,
+      conclusion: misleading,
+      isCorrect: false,
+      steps,
+      difficulty: fragments.length + 1,
+    })
+  }
+
+  if (correctAnswer && audibleFragments.length === 0) {
+    paths.push({
+      id: `path_${pathId++}`,
+      fragments: [],
+      conclusion: '线索完全被遮蔽，无法推理',
+      isCorrect: false,
+      steps: ['所有关键词均被噪声遮蔽', '玩家无法获取有效信息'],
+      difficulty: 99,
+    })
+  }
+
+  return paths
 }

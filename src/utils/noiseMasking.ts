@@ -1,4 +1,4 @@
-import type { NoiseConfig, KeywordMaskStatus, BroadcastSegment } from '@/store/projectStore'
+import type { NoiseConfig, KeywordMaskStatus, BroadcastSegment, SegmentMaskResult } from '@/store/projectStore'
 
 interface NoiseWeights {
   environmental: number
@@ -42,14 +42,14 @@ function classifyKeyword(keyword: string): keyof NoiseWeights {
   return 'general'
 }
 
-export function calculateKeywordMasks(
-  segments: BroadcastSegment[],
+export function calculateKeywordMasksForSegment(
+  segment: BroadcastSegment,
   noiseConfig: NoiseConfig
 ): KeywordMaskStatus[] {
-  const allKeywords = segments.flatMap((s) => s.keywords)
-  const uniqueKeywords = [...new Set(allKeywords)]
+  const cleanedText = segment.text.replace(/[█▓░…—]/g, '')
+  const actualKeywords = segment.keywords.filter((kw) => cleanedText.includes(kw))
 
-  return uniqueKeywords.map((keyword) => {
+  return actualKeywords.map((keyword) => {
     const category = classifyKeyword(keyword)
 
     let combinedProb = 0
@@ -76,15 +76,33 @@ export function calculateKeywordMasks(
   })
 }
 
-export function simulateNoisyText(
+export function calculateAllSegmentMasks(
+  segments: BroadcastSegment[],
+  noiseConfig: NoiseConfig
+): SegmentMaskResult[] {
+  return segments.map((seg) => {
+    const masks = calculateKeywordMasksForSegment(seg, noiseConfig)
+    const simulatedChars = simulateNoisyTextChars(seg.text, masks, noiseConfig)
+    const simulatedText = simulatedChars.map((c) => c.char).join('')
+    const audibleFragments = masks
+      .filter((m) => m.level === 'clear' || m.level === 'partial')
+      .map((m) => m.keyword)
+
+    return {
+      segmentId: seg.id,
+      segmentIndex: seg.index,
+      masks,
+      simulatedText,
+      audibleFragments,
+    }
+  })
+}
+
+export function simulateNoisyTextChars(
   text: string,
-  keywords: string[],
+  masks: KeywordMaskStatus[],
   noiseConfig: NoiseConfig
 ): { char: string; masked: boolean }[] {
-  const masks = calculateKeywordMasks(
-    [{ id: 'sim', index: 0, text, keywords }],
-    noiseConfig
-  )
   const maskedKeywords = new Set(
     masks.filter((m) => m.level === 'masked').map((m) => m.keyword)
   )
@@ -134,4 +152,78 @@ export function simulateNoisyText(
   }
 
   return result
+}
+
+export function getGlobalAudibleFragments(
+  segmentMasks: SegmentMaskResult[]
+): { clear: string[]; partial: string[]; masked: string[] } {
+  const clear = new Set<string>()
+  const partial = new Set<string>()
+  const masked = new Set<string>()
+
+  for (const sm of segmentMasks) {
+    for (const mask of sm.masks) {
+      if (mask.level === 'clear') clear.add(mask.keyword)
+      else if (mask.level === 'partial') partial.add(mask.keyword)
+      else masked.add(mask.keyword)
+    }
+  }
+
+  return {
+    clear: Array.from(clear),
+    partial: Array.from(partial),
+    masked: Array.from(masked),
+  }
+}
+
+export function calculateKeywordMasks(
+  segments: BroadcastSegment[],
+  noiseConfig: NoiseConfig
+): KeywordMaskStatus[] {
+  const allMasks: KeywordMaskStatus[] = []
+  const seenKeywords = new Set<string>()
+
+  for (const seg of segments) {
+    const masks = calculateKeywordMasksForSegment(seg, noiseConfig)
+    for (const mask of masks) {
+      if (!seenKeywords.has(mask.keyword)) {
+        seenKeywords.add(mask.keyword)
+        allMasks.push(mask)
+      }
+    }
+  }
+
+  return allMasks
+}
+
+export function simulateNoisyText(
+  text: string,
+  keywords: string[],
+  noiseConfig: NoiseConfig
+): { char: string; masked: boolean }[] {
+  const masks: KeywordMaskStatus[] = keywords.map((keyword) => {
+    const category = classifyKeyword(keyword)
+    let combinedProb = 0
+    for (const [channel, weights] of Object.entries(NOISE_WEIGHTS)) {
+      const intensity = noiseConfig[channel as keyof NoiseConfig] / 100
+      const weight = weights[category]
+      const channelProb = intensity * weight
+      combinedProb = 1 - (1 - combinedProb) * (1 - channelProb)
+    }
+    const positionBias = Math.random() * 0.1
+    combinedProb = Math.min(1, combinedProb + positionBias)
+
+    let level: KeywordMaskStatus['level']
+    if (combinedProb > 0.7) level = 'masked'
+    else if (combinedProb > 0.3) level = 'partial'
+    else level = 'clear'
+
+    return {
+      keyword,
+      probability: Math.round(combinedProb * 100) / 100,
+      level,
+    }
+  })
+
+  return simulateNoisyTextChars(text, masks, noiseConfig)
 }

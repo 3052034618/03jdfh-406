@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { persist, createJSONStorage } from 'zustand/middleware'
 
 export interface BroadcastSegment {
   id: string
@@ -20,6 +21,14 @@ export interface KeywordMaskStatus {
   level: 'masked' | 'partial' | 'clear'
 }
 
+export interface SegmentMaskResult {
+  segmentId: string
+  segmentIndex: number
+  masks: KeywordMaskStatus[]
+  simulatedText: string
+  audibleFragments: string[]
+}
+
 export interface ReasoningPath {
   id: string
   fragments: string[]
@@ -29,11 +38,12 @@ export interface ReasoningPath {
   difficulty: number
 }
 
-export type PanelType = 'draft' | 'noise' | 'verify'
+export type PanelType = 'draft' | 'noise' | 'verify' | 'preview'
 export type SceneLocation = 'abandoned_hospital' | 'midnight_highway' | 'underground_station' | 'lighthouse' | 'cabin' | 'custom'
 export type BroadcastTone = 'official' | 'personal' | 'emergency' | 'mechanical' | 'ritual'
 
-interface ProjectStore {
+export interface ProjectState {
+  id: string
   projectName: string
   sceneLocation: SceneLocation
   customSceneName: string
@@ -43,11 +53,25 @@ interface ProjectStore {
   playerClues: string
   segments: BroadcastSegment[]
   noiseConfig: NoiseConfig
-  keywordMasks: KeywordMaskStatus[]
+  segmentMasks: SegmentMaskResult[]
   correctAnswer: string
+  correctClueChain: string
   misleadingAnswers: string[]
   reasoningPaths: ReasoningPath[]
+  createdAt: string
+  updatedAt: string
+}
+
+interface ProjectStore extends ProjectState {
+  projects: Record<string, ProjectState>
+  currentProjectId: string
   activePanel: PanelType
+
+  getCurrentProject: () => ProjectState
+  createProject: (name: string) => string
+  switchProject: (id: string) => void
+  renameProject: (id: string, name: string) => void
+  deleteProject: (id: string) => void
 
   setProjectName: (name: string) => void
   setSceneLocation: (location: SceneLocation) => void
@@ -59,13 +83,14 @@ interface ProjectStore {
   generateSegments: () => void
   updateSegment: (id: string, text: string) => void
   setNoiseConfig: (config: Partial<NoiseConfig>) => void
-  setKeywordMasks: (masks: KeywordMaskStatus[]) => void
+  setSegmentMasks: (masks: SegmentMaskResult[]) => void
   setCorrectAnswer: (answer: string) => void
+  setCorrectClueChain: (chain: string) => void
   addMisleadingAnswer: (answer: string) => void
   removeMisleadingAnswer: (index: number) => void
   setReasoningPaths: (paths: ReasoningPath[]) => void
   setActivePanel: (panel: PanelType) => void
-  exportProject: () => object
+  exportProject: (projectId?: string) => object
 }
 
 const SCENE_LABELS: Record<SceneLocation, string> = {
@@ -97,106 +122,497 @@ export const ERA_LABELS: Record<number, string> = {
   2020: '2020s',
 }
 
-export const useProjectStore = create<ProjectStore>((set, get) => ({
-  projectName: '未命名项目',
-  sceneLocation: 'abandoned_hospital',
-  customSceneName: '',
-  era: 1980,
-  broadcastTone: 'official',
-  interferenceLevel: 3,
-  playerClues: '',
-  segments: [],
-  noiseConfig: {
-    rain: 20,
-    whiteNoise: 10,
-    reversedVocal: 0,
-    powerOutage: 0,
-  },
-  keywordMasks: [],
-  correctAnswer: '',
-  misleadingAnswers: [],
-  reasoningPaths: [],
-  activePanel: 'draft',
+function generateId(): string {
+  return `proj_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+}
 
-  setProjectName: (name) => set({ projectName: name }),
-  setSceneLocation: (location) => set({ sceneLocation: location }),
-  setCustomSceneName: (name) => set({ customSceneName: name }),
-  setEra: (era) => set({ era }),
-  setBroadcastTone: (tone) => set({ broadcastTone: tone }),
-  setInterferenceLevel: (level) => set({ interferenceLevel: level }),
-  setPlayerClues: (clues) => set({ playerClues: clues }),
+function createDefaultProject(name: string): ProjectState {
+  return {
+    id: generateId(),
+    projectName: name,
+    sceneLocation: 'abandoned_hospital',
+    customSceneName: '',
+    era: 1980,
+    broadcastTone: 'official',
+    interferenceLevel: 3,
+    playerClues: '',
+    segments: [],
+    noiseConfig: {
+      rain: 20,
+      whiteNoise: 10,
+      reversedVocal: 0,
+      powerOutage: 0,
+    },
+    segmentMasks: [],
+    correctAnswer: '',
+    correctClueChain: '',
+    misleadingAnswers: [],
+    reasoningPaths: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  }
+}
 
-  generateSegments: () => {
-    const state = get()
-    const segments = generateBroadcastTexts(
-      state.sceneLocation,
-      state.customSceneName,
-      state.era,
-      state.broadcastTone,
-      state.interferenceLevel,
-      state.playerClues
-    )
-    set({ segments, keywordMasks: [], reasoningPaths: [] })
-  },
+const initialProject = createDefaultProject('未命名项目')
 
-  updateSegment: (id, text) =>
-    set((state) => ({
-      segments: state.segments.map((s) =>
-        s.id === id ? { ...s, text } : s
-      ),
-    })),
-
-  setNoiseConfig: (config) =>
-    set((state) => ({
-      noiseConfig: { ...state.noiseConfig, ...config },
-    })),
-
-  setKeywordMasks: (masks) => set({ keywordMasks: masks }),
-
-  setCorrectAnswer: (answer) => set({ correctAnswer: answer }),
-
-  addMisleadingAnswer: (answer) =>
-    set((state) => ({
-      misleadingAnswers: [...state.misleadingAnswers, answer],
-    })),
-
-  removeMisleadingAnswer: (index) =>
-    set((state) => ({
-      misleadingAnswers: state.misleadingAnswers.filter((_, i) => i !== index),
-    })),
-
-  setReasoningPaths: (paths) => set({ reasoningPaths: paths }),
-
-  setActivePanel: (panel) => set({ activePanel: panel }),
-
-  exportProject: () => {
-    const state = get()
-    return {
-      projectName: state.projectName,
-      scene: {
-        location: state.sceneLocation,
-        customName: state.customSceneName,
-        era: state.era,
-        tone: state.broadcastTone,
-        interferenceLevel: state.interferenceLevel,
+export const useProjectStore = create<ProjectStore>()(
+  persist(
+    (set, get) => ({
+      ...initialProject,
+      projects: {
+        [initialProject.id]: initialProject,
       },
-      playerClues: state.playerClues,
-      broadcastSegments: state.segments.map((s) => ({
-        index: s.index,
-        text: s.text,
-        keywords: s.keywords,
-      })),
-      noiseLayer: state.noiseConfig,
-      keywordMaskStatus: state.keywordMasks,
-      puzzle: {
-        correctAnswer: state.correctAnswer,
-        misleadingAnswers: state.misleadingAnswers,
+      currentProjectId: initialProject.id,
+      activePanel: 'draft',
+
+      getCurrentProject: () => {
+        const state = get()
+        return state.projects[state.currentProjectId] || createDefaultProject('空项目')
       },
-      reasoningPaths: state.reasoningPaths,
-      exportedAt: new Date().toISOString(),
+
+      createProject: (name) => {
+        const newProject = createDefaultProject(name)
+        set((state) => ({
+          ...newProject,
+          projects: {
+            ...state.projects,
+            [newProject.id]: newProject,
+          },
+          currentProjectId: newProject.id,
+          activePanel: 'draft',
+        }))
+        return newProject.id
+      },
+
+      switchProject: (id) => {
+        set((state) => {
+          if (!state.projects[id]) return state
+          return {
+            ...state.projects[id],
+            currentProjectId: id,
+            activePanel: 'draft',
+          }
+        })
+      },
+
+      renameProject: (id, name) => {
+        set((state) => {
+          if (!state.projects[id]) return state
+          const updatedProject = {
+            ...state.projects[id],
+            projectName: name,
+            updatedAt: new Date().toISOString(),
+          }
+          return {
+            ...(state.currentProjectId === id ? updatedProject : {}),
+            projects: {
+              ...state.projects,
+              [id]: updatedProject,
+            },
+          }
+        })
+      },
+
+      deleteProject: (id) => {
+        set((state) => {
+          const projects = { ...state.projects }
+          delete projects[id]
+          const remainingIds = Object.keys(projects)
+          if (remainingIds.length === 0) {
+            const newProject = createDefaultProject('未命名项目')
+            return {
+              ...newProject,
+              projects: { [newProject.id]: newProject },
+              currentProjectId: newProject.id,
+              activePanel: 'draft',
+            }
+          }
+          const newCurrentId = state.currentProjectId === id ? remainingIds[0] : state.currentProjectId
+          return {
+            ...projects[newCurrentId],
+            projects,
+            currentProjectId: newCurrentId,
+          }
+        })
+      },
+
+      setProjectName: (name) => {
+        const state = get()
+        const id = state.currentProjectId
+        const updatedProject = {
+          ...state.projects[id],
+          projectName: name,
+          updatedAt: new Date().toISOString(),
+        }
+        set({
+          ...updatedProject,
+          projects: {
+            ...state.projects,
+            [id]: updatedProject,
+          },
+        })
+      },
+
+      setSceneLocation: (location) => {
+        const state = get()
+        const id = state.currentProjectId
+        const updatedProject = {
+          ...state.projects[id],
+          sceneLocation: location,
+          updatedAt: new Date().toISOString(),
+        }
+        set({
+          ...updatedProject,
+          projects: {
+            ...state.projects,
+            [id]: updatedProject,
+          },
+        })
+      },
+
+      setCustomSceneName: (name) => {
+        const state = get()
+        const id = state.currentProjectId
+        const updatedProject = {
+          ...state.projects[id],
+          customSceneName: name,
+          updatedAt: new Date().toISOString(),
+        }
+        set({
+          ...updatedProject,
+          projects: {
+            ...state.projects,
+            [id]: updatedProject,
+          },
+        })
+      },
+
+      setEra: (era) => {
+        const state = get()
+        const id = state.currentProjectId
+        const updatedProject = {
+          ...state.projects[id],
+          era,
+          updatedAt: new Date().toISOString(),
+        }
+        set({
+          ...updatedProject,
+          projects: {
+            ...state.projects,
+            [id]: updatedProject,
+          },
+        })
+      },
+
+      setBroadcastTone: (tone) => {
+        const state = get()
+        const id = state.currentProjectId
+        const updatedProject = {
+          ...state.projects[id],
+          broadcastTone: tone,
+          updatedAt: new Date().toISOString(),
+        }
+        set({
+          ...updatedProject,
+          projects: {
+            ...state.projects,
+            [id]: updatedProject,
+          },
+        })
+      },
+
+      setInterferenceLevel: (level) => {
+        const state = get()
+        const id = state.currentProjectId
+        const updatedProject = {
+          ...state.projects[id],
+          interferenceLevel: level,
+          updatedAt: new Date().toISOString(),
+        }
+        set({
+          ...updatedProject,
+          projects: {
+            ...state.projects,
+            [id]: updatedProject,
+          },
+        })
+      },
+
+      setPlayerClues: (clues) => {
+        const state = get()
+        const id = state.currentProjectId
+        const updatedProject = {
+          ...state.projects[id],
+          playerClues: clues,
+          updatedAt: new Date().toISOString(),
+        }
+        set({
+          ...updatedProject,
+          projects: {
+            ...state.projects,
+            [id]: updatedProject,
+          },
+        })
+      },
+
+      generateSegments: () => {
+        const state = get()
+        const id = state.currentProjectId
+        const proj = state.projects[id]
+        const segments = generateBroadcastTexts(
+          proj.sceneLocation,
+          proj.customSceneName,
+          proj.era,
+          proj.broadcastTone,
+          proj.interferenceLevel,
+          proj.playerClues
+        )
+        const updatedProject = {
+          ...state.projects[id],
+          segments,
+          segmentMasks: [],
+          reasoningPaths: [],
+          updatedAt: new Date().toISOString(),
+        }
+        set({
+          ...updatedProject,
+          projects: {
+            ...state.projects,
+            [id]: updatedProject,
+          },
+        })
+      },
+
+      updateSegment: (segId, text) => {
+        const state = get()
+        const id = state.currentProjectId
+        const proj = state.projects[id]
+
+        const clueWords = proj.playerClues.split(/[,，、\s]+/).filter(Boolean)
+        const sceneData = getSceneData(proj.sceneLocation, proj.customSceneName)
+        const newKeywords = extractKeywords(text, sceneData.keywords, clueWords)
+
+        const updatedSegments = proj.segments.map((s) =>
+          s.id === segId ? { ...s, text, keywords: newKeywords } : s
+        )
+
+        const updatedProject = {
+          ...state.projects[id],
+          segments: updatedSegments,
+          updatedAt: new Date().toISOString(),
+        }
+        set({
+          ...updatedProject,
+          projects: {
+            ...state.projects,
+            [id]: updatedProject,
+          },
+        })
+      },
+
+      setNoiseConfig: (config) => {
+        const state = get()
+        const id = state.currentProjectId
+        const updatedProject = {
+          ...state.projects[id],
+          noiseConfig: { ...state.projects[id].noiseConfig, ...config },
+          updatedAt: new Date().toISOString(),
+        }
+        set({
+          ...updatedProject,
+          projects: {
+            ...state.projects,
+            [id]: updatedProject,
+          },
+        })
+      },
+
+      setSegmentMasks: (masks) => {
+        const state = get()
+        const id = state.currentProjectId
+        const updatedProject = {
+          ...state.projects[id],
+          segmentMasks: masks,
+          updatedAt: new Date().toISOString(),
+        }
+        set({
+          ...updatedProject,
+          projects: {
+            ...state.projects,
+            [id]: updatedProject,
+          },
+        })
+      },
+
+      setCorrectAnswer: (answer) => {
+        const state = get()
+        const id = state.currentProjectId
+        const updatedProject = {
+          ...state.projects[id],
+          correctAnswer: answer,
+          updatedAt: new Date().toISOString(),
+        }
+        set({
+          ...updatedProject,
+          projects: {
+            ...state.projects,
+            [id]: updatedProject,
+          },
+        })
+      },
+
+      setCorrectClueChain: (chain) => {
+        const state = get()
+        const id = state.currentProjectId
+        const updatedProject = {
+          ...state.projects[id],
+          correctClueChain: chain,
+          updatedAt: new Date().toISOString(),
+        }
+        set({
+          ...updatedProject,
+          projects: {
+            ...state.projects,
+            [id]: updatedProject,
+          },
+        })
+      },
+
+      addMisleadingAnswer: (answer) => {
+        const state = get()
+        const id = state.currentProjectId
+        const updatedProject = {
+          ...state.projects[id],
+          misleadingAnswers: [...state.projects[id].misleadingAnswers, answer],
+          updatedAt: new Date().toISOString(),
+        }
+        set({
+          ...updatedProject,
+          projects: {
+            ...state.projects,
+            [id]: updatedProject,
+          },
+        })
+      },
+
+      removeMisleadingAnswer: (index) => {
+        const state = get()
+        const id = state.currentProjectId
+        const updatedProject = {
+          ...state.projects[id],
+          misleadingAnswers: state.projects[id].misleadingAnswers.filter(
+            (_, i) => i !== index
+          ),
+          updatedAt: new Date().toISOString(),
+        }
+        set({
+          ...updatedProject,
+          projects: {
+            ...state.projects,
+            [id]: updatedProject,
+          },
+        })
+      },
+
+      setReasoningPaths: (paths) => {
+        const state = get()
+        const id = state.currentProjectId
+        const updatedProject = {
+          ...state.projects[id],
+          reasoningPaths: paths,
+          updatedAt: new Date().toISOString(),
+        }
+        set({
+          ...updatedProject,
+          projects: {
+            ...state.projects,
+            [id]: updatedProject,
+          },
+        })
+      },
+
+      setActivePanel: (panel) => set({ activePanel: panel }),
+
+      exportProject: (projectId) => {
+        const state = get()
+        const id = projectId || state.currentProjectId
+        const proj = state.projects[id]
+        if (!proj) return {}
+
+        return {
+          projectId: proj.id,
+          projectName: proj.projectName,
+          createdAt: proj.createdAt,
+          exportedAt: new Date().toISOString(),
+          scene: {
+            location: proj.sceneLocation,
+            locationLabel: SCENE_LABELS[proj.sceneLocation],
+            customName: proj.customSceneName,
+            era: proj.era,
+            eraLabel: ERA_LABELS[proj.era],
+            tone: proj.broadcastTone,
+            toneLabel: TONE_LABELS[proj.broadcastTone],
+            interferenceLevel: proj.interferenceLevel,
+          },
+          playerClues: proj.playerClues,
+          broadcastSegments: proj.segments.map((s) => ({
+            index: s.index,
+            originalText: s.text,
+            keywords: s.keywords,
+          })),
+          noiseLayer: {
+            rain: proj.noiseConfig.rain,
+            whiteNoise: proj.noiseConfig.whiteNoise,
+            reversedVocal: proj.noiseConfig.reversedVocal,
+            powerOutage: proj.noiseConfig.powerOutage,
+          },
+          segmentMaskResults: proj.segmentMasks.map((sm) => ({
+            segmentIndex: sm.segmentIndex,
+            simulatedText: sm.simulatedText,
+            audibleFragments: sm.audibleFragments,
+            keywordMasks: sm.masks.map((m) => ({
+              keyword: m.keyword,
+              probability: m.probability,
+              level: m.level,
+            })),
+          })),
+          summary: {
+            totalKeywords: proj.segmentMasks.flatMap((sm) => sm.masks).length,
+            maskedCount: proj.segmentMasks.flatMap((sm) => sm.masks).filter((m) => m.level === 'masked').length,
+            partialCount: proj.segmentMasks.flatMap((sm) => sm.masks).filter((m) => m.level === 'partial').length,
+            clearCount: proj.segmentMasks.flatMap((sm) => sm.masks).filter((m) => m.level === 'clear').length,
+            allAudibleFragments: [...new Set(proj.segmentMasks.flatMap((sm) => sm.audibleFragments))],
+          },
+          puzzle: {
+            correctAnswer: proj.correctAnswer,
+            correctClueChain: proj.correctClueChain,
+            misleadingAnswers: proj.misleadingAnswers,
+          },
+          reasoningPaths: proj.reasoningPaths.map((rp) => ({
+            conclusion: rp.conclusion,
+            isCorrect: rp.isCorrect,
+            fragments: rp.fragments,
+            steps: rp.steps,
+            difficulty: rp.difficulty,
+          })),
+          reviewerNotes: {
+            forDesigner: `场景：${SCENE_LABELS[proj.sceneLocation]} | 年代：${ERA_LABELS[proj.era]} | 口吻：${TONE_LABELS[proj.broadcastTone]} | 干扰等级：${proj.interferenceLevel}`,
+            forNarrative: `玩家已知线索：${proj.playerClues || '无'}；正确答案：${proj.correctAnswer || '未设置'}；误导答案：${proj.misleadingAnswers.length} 个`,
+            forAudio: `噪声配置 - 雨声：${proj.noiseConfig.rain}%，白噪：${proj.noiseConfig.whiteNoise}%，倒放：${proj.noiseConfig.reversedVocal}%，断电：${proj.noiseConfig.powerOutage}%`,
+          },
+        }
+      },
+    }),
+    {
+      name: 'radio-puzzle-storage',
+      storage: createJSONStorage(() => localStorage),
+      partialize: (state) => ({
+        projects: state.projects,
+        currentProjectId: state.currentProjectId,
+      }),
     }
-  },
-}))
+  )
+)
 
 function generateBroadcastTexts(
   scene: SceneLocation,
@@ -250,7 +666,7 @@ function generateBroadcastTexts(
   return segments
 }
 
-function getSceneData(scene: SceneLocation, customName: string) {
+export function getSceneData(scene: SceneLocation, customName: string) {
   const data: Record<string, { keywords: string[]; details: string[]; actions: string[] }> = {
     abandoned_hospital: {
       keywords: ['病房', '走廊', '手术室', '地下室', '配药间', '太平间'],
@@ -385,13 +801,25 @@ function applyInterference(text: string, level: number): string {
   return chars.join('')
 }
 
-function extractKeywords(text: string, sceneKeywords: string[], clueWords: string[]): string[] {
+export function extractKeywords(
+  text: string,
+  sceneKeywords: string[],
+  clueWords: string[]
+): string[] {
+  const cleanedText = text.replace(/[█▓░…—]/g, '')
   const found: string[] = []
+
   for (const kw of sceneKeywords) {
-    if (text.includes(kw)) found.push(kw)
+    if (cleanedText.includes(kw)) {
+      found.push(kw)
+    }
   }
+
   for (const cw of clueWords) {
-    if (cw && text.includes(cw) && !found.includes(cw)) found.push(cw)
+    if (cw && cleanedText.includes(cw) && !found.includes(cw)) {
+      found.push(cw)
+    }
   }
-  return found.length > 0 ? found : sceneKeywords.slice(0, 3)
+
+  return found.length > 0 ? found : []
 }

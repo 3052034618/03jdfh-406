@@ -48,13 +48,7 @@ const ERA_VALUES = [1960, 1970, 1980, 1990, 2000, 2010, 2020]
 
 export default function FrequencyDraft() {
   const {
-    sceneLocation,
-    customSceneName,
-    era,
-    broadcastTone,
-    interferenceLevel,
-    playerClues,
-    segments,
+    getCurrentProject,
     setSceneLocation,
     setCustomSceneName,
     setEra,
@@ -65,6 +59,7 @@ export default function FrequencyDraft() {
     updateSegment,
   } = useProjectStore()
 
+  const proj = getCurrentProject()
   const [isGenerating, setIsGenerating] = useState(false)
 
   const handleGenerate = () => {
@@ -90,7 +85,7 @@ export default function FrequencyDraft() {
         <div className="grid grid-cols-3 gap-2">
           {SCENES.map((scene) => {
             const Icon = SCENE_ICONS[scene]
-            const isActive = sceneLocation === scene
+            const isActive = proj.sceneLocation === scene
             return (
               <button
                 key={scene}
@@ -109,10 +104,10 @@ export default function FrequencyDraft() {
             )
           })}
         </div>
-        {sceneLocation === 'custom' && (
+        {proj.sceneLocation === 'custom' && (
           <input
             type="text"
-            value={customSceneName}
+            value={proj.customSceneName}
             onChange={(e) => setCustomSceneName(e.target.value)}
             placeholder="输入自定义场景名称…"
             className="w-full px-4 py-2 rounded-sm bg-panel border border-border text-fg text-sm
@@ -130,7 +125,7 @@ export default function FrequencyDraft() {
               min={1960}
               max={2020}
               step={10}
-              value={era}
+              value={proj.era}
               onChange={(e) => setEra(Number(e.target.value))}
               className="w-full slider-amber appearance-none bg-transparent cursor-pointer"
             />
@@ -138,7 +133,7 @@ export default function FrequencyDraft() {
               {ERA_VALUES.map((v) => (
                 <span
                   key={v}
-                  className={`text-xs font-mono ${v === era ? 'text-amber' : 'text-muted'}`}
+                  className={`text-xs font-mono ${v === proj.era ? 'text-amber' : 'text-muted'}`}
                 >
                   {ERA_LABELS[v]}
                 </span>
@@ -156,7 +151,7 @@ export default function FrequencyDraft() {
                 onClick={() => setBroadcastTone(tone)}
                 className={`
                   w-full text-left px-3 py-1.5 rounded-sm text-sm font-sans transition-all duration-150
-                  ${broadcastTone === tone
+                  ${proj.broadcastTone === tone
                     ? 'bg-amber/15 text-amber border border-amber/30'
                     : 'text-fgdim hover:bg-panel hover:text-fg border border-transparent'
                   }
@@ -177,7 +172,7 @@ export default function FrequencyDraft() {
                 onClick={() => setInterferenceLevel(level)}
                 className={`
                   flex-1 py-2 rounded-sm text-sm font-mono transition-all duration-150
-                  ${interferenceLevel >= level
+                  ${proj.interferenceLevel >= level
                     ? 'bg-amber/20 text-amber border border-amber/40'
                     : 'bg-panel text-muted border border-border hover:text-fgdim'
                   }
@@ -197,7 +192,7 @@ export default function FrequencyDraft() {
       <section className="space-y-2">
         <h3 className="font-mono text-xs text-fgdim tracking-widest uppercase">玩家已知线索</h3>
         <textarea
-          value={playerClues}
+          value={proj.playerClues}
           onChange={(e) => setPlayerClues(e.target.value)}
           placeholder="输入玩家在进入谜题前已掌握的信息，多个线索用逗号分隔…"
           rows={2}
@@ -226,13 +221,13 @@ export default function FrequencyDraft() {
           </button>
         </div>
 
-        {segments.length === 0 ? (
+        {proj.segments.length === 0 ? (
           <div className="terminal-text text-sm text-muted border border-border rounded-sm bg-void/50 p-6 text-center">
             <span className="cursor-blink">配置参数后点击"生成广播"</span>
           </div>
         ) : (
           <div className="space-y-2">
-            {segments.map((seg) => (
+            {proj.segments.map((seg) => (
               <div
                 key={seg.id}
                 className="border border-border rounded-sm bg-void/50 overflow-hidden"

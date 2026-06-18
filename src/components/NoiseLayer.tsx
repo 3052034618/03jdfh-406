@@ -1,7 +1,7 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import { CloudRain, AudioLines, RotateCcw, Power, AlertTriangle, Eye } from 'lucide-react'
 import { useProjectStore } from '@/store/projectStore'
-import { calculateKeywordMasks, simulateNoisyText } from '@/utils/noiseMasking'
+import { calculateAllSegmentMasks, getGlobalAudibleFragments } from '@/utils/noiseMasking'
 
 const NOISE_CHANNELS = [
   { key: 'rain' as const, label: '雨声', icon: CloudRain, color: 'text-blue-400' },
@@ -11,28 +11,27 @@ const NOISE_CHANNELS = [
 ]
 
 export default function NoiseLayer() {
-  const { segments, noiseConfig, setNoiseConfig } = useProjectStore()
+  const { getCurrentProject, setNoiseConfig, setSegmentMasks } = useProjectStore()
+  const proj = getCurrentProject()
 
-  const keywordMasks = useMemo(
-    () => calculateKeywordMasks(segments, noiseConfig),
-    [segments, noiseConfig]
-  )
+  useEffect(() => {
+    if (proj.segments.length > 0) {
+      const masks = calculateAllSegmentMasks(proj.segments, proj.noiseConfig)
+      setSegmentMasks(masks)
+    }
+  }, [proj.segments, proj.noiseConfig, setSegmentMasks])
 
-  const maskedCount = keywordMasks.filter((m) => m.level === 'masked').length
-  const partialCount = keywordMasks.filter((m) => m.level === 'partial').length
-  const clearCount = keywordMasks.filter((m) => m.level === 'clear').length
-
-  const hasCriticalMask = keywordMasks.some((m) => m.level === 'masked')
-
-  const simulatedSegments = useMemo(
-    () =>
-      segments.map((seg) => ({
-        id: seg.id,
-        index: seg.index,
-        simulated: simulateNoisyText(seg.text, seg.keywords, noiseConfig),
-      })),
-    [segments, noiseConfig]
-  )
+  const stats = useMemo(() => {
+    const { clear, partial, masked } = getGlobalAudibleFragments(proj.segmentMasks)
+    const allMasks = proj.segmentMasks.flatMap((sm) => sm.masks)
+    return {
+      clear: clear.length,
+      partial: partial.length,
+      masked: masked.length,
+      total: allMasks.length,
+      hasCritical: masked.length > 0,
+    }
+  }, [proj.segmentMasks])
 
   return (
     <div className="panel-enter space-y-6">
@@ -57,14 +56,14 @@ export default function NoiseLayer() {
                       <span className="text-sm font-sans text-fg">{label}</span>
                     </div>
                     <span className="font-mono text-xs text-amber">
-                      {noiseConfig[key]}%
+                      {proj.noiseConfig[key]}%
                     </span>
                   </div>
                   <input
                     type="range"
                     min={0}
                     max={100}
-                    value={noiseConfig[key]}
+                    value={proj.noiseConfig[key]}
                     onChange={(e) =>
                       setNoiseConfig({ [key]: Number(e.target.value) })
                     }
@@ -73,7 +72,7 @@ export default function NoiseLayer() {
                   <div className="h-1 rounded-full bg-border overflow-hidden">
                     <div
                       className="h-full rounded-full bg-amber/50 transition-all duration-150"
-                      style={{ width: `${noiseConfig[key]}%` }}
+                      style={{ width: `${proj.noiseConfig[key]}%` }}
                     />
                   </div>
                 </div>
@@ -85,21 +84,21 @@ export default function NoiseLayer() {
             <h3 className="font-mono text-xs text-fgdim tracking-widest uppercase">关键词状态</h3>
             <div className="grid grid-cols-3 gap-2 text-center">
               <div className="p-2 rounded-sm bg-danger/10 border border-danger/20">
-                <div className="font-mono text-lg text-danger-glow">{maskedCount}</div>
+                <div className="font-mono text-lg text-danger-glow">{stats.masked}</div>
                 <div className="text-xs text-danger">遮蔽</div>
               </div>
               <div className="p-2 rounded-sm bg-warn/10 border border-warn/20">
-                <div className="font-mono text-lg text-warn-glow">{partialCount}</div>
+                <div className="font-mono text-lg text-warn-glow">{stats.partial}</div>
                 <div className="text-xs text-warn">部分</div>
               </div>
               <div className="p-2 rounded-sm bg-safe/10 border border-safe/20">
-                <div className="font-mono text-lg text-safe-glow">{clearCount}</div>
+                <div className="font-mono text-lg text-safe-glow">{stats.clear}</div>
                 <div className="text-xs text-safe">可辨</div>
               </div>
             </div>
           </section>
 
-          {hasCriticalMask && (
+          {stats.hasCritical && (
             <div className="flex items-start gap-2 p-3 rounded-sm bg-danger/10 border border-danger/30">
               <AlertTriangle className="w-4 h-4 text-danger-glow flex-shrink-0 mt-0.5" />
               <div className="text-xs text-danger-glow font-sans leading-relaxed">
@@ -115,16 +114,17 @@ export default function NoiseLayer() {
               <Eye className="w-4 h-4 text-amber" />
               <h3 className="font-mono text-xs text-fgdim tracking-widest uppercase">关键词遮蔽预警</h3>
             </div>
-            {segments.length === 0 ? (
+            {proj.segments.length === 0 ? (
               <div className="terminal-text text-sm text-muted border border-border rounded-sm bg-void/50 p-6 text-center">
                 请先在"频段草稿"中生成广播文本
               </div>
             ) : (
               <div className="space-y-2">
-                {segments.map((seg) => {
-                  const segKeywords = keywordMasks.filter((m) =>
-                    seg.keywords.includes(m.keyword)
+                {proj.segments.map((seg) => {
+                  const segMask = proj.segmentMasks.find(
+                    (sm) => sm.segmentId === seg.id
                   )
+                  const segKeywords = segMask?.masks || []
                   return (
                     <div
                       key={seg.id}
@@ -135,20 +135,27 @@ export default function NoiseLayer() {
                           CH-{String(seg.index).padStart(2, '0')}
                         </span>
                         <div className="flex gap-1">
-                          {segKeywords.map((m) => (
-                            <span
-                              key={m.keyword}
-                              className={`px-1.5 py-0.5 text-xs font-mono rounded-sm ${
-                                m.level === 'masked'
-                                  ? 'keyword-masked'
-                                  : m.level === 'partial'
-                                  ? 'keyword-partial'
-                                  : 'keyword-clear'
-                              }`}
-                            >
-                              {m.keyword}
-                            </span>
-                          ))}
+                          {segKeywords.length > 0 ? (
+                            segKeywords.map((m) => (
+                              <span
+                                key={m.keyword}
+                                className={`px-1.5 py-0.5 text-xs font-mono rounded-sm ${
+                                  m.level === 'masked'
+                                    ? 'keyword-masked'
+                                    : m.level === 'partial'
+                                    ? 'keyword-partial'
+                                    : 'keyword-clear'
+                                }`}
+                              >
+                                {m.keyword}
+                                <span className="ml-1 opacity-60">
+                                  {Math.round(m.probability * 100)}%
+                                </span>
+                              </span>
+                            ))
+                          ) : (
+                            <span className="text-xs font-mono text-muted">无匹配关键词</span>
+                          )}
                         </div>
                       </div>
                       <p className="text-sm font-sans text-fg/80 leading-relaxed">
@@ -163,33 +170,37 @@ export default function NoiseLayer() {
 
           <section className="space-y-2">
             <h3 className="font-mono text-xs text-fgdim tracking-widest uppercase">模拟试听</h3>
-            {simulatedSegments.length === 0 ? (
+            {proj.segmentMasks.length === 0 ? (
               <div className="terminal-text text-sm text-muted border border-border rounded-sm bg-void/50 p-6 text-center">
                 生成广播文本后可模拟试听效果
               </div>
             ) : (
               <div className="space-y-2">
-                {simulatedSegments.map((seg) => (
+                {proj.segmentMasks.map((sm) => (
                   <div
-                    key={seg.id}
+                    key={sm.segmentId}
                     className="border border-border rounded-sm bg-void/50 p-3 terminal-text"
                   >
-                    <div className="flex items-center mb-2">
+                    <div className="flex items-center justify-between mb-2">
                       <span className="font-mono text-xs text-amber">
-                        CH-{String(seg.index).padStart(2, '0')} 模拟输出
+                        CH-{String(sm.segmentIndex).padStart(2, '0')} 模拟输出
                       </span>
+                      {sm.audibleFragments.length > 0 && (
+                        <div className="flex gap-1">
+                          <span className="text-xs font-mono text-muted">可闻:</span>
+                          {sm.audibleFragments.map((f, i) => (
+                            <span
+                              key={i}
+                              className="px-1.5 py-0.5 text-xs font-mono bg-safe/15 text-safe-glow rounded-sm"
+                            >
+                              {f}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                    <p className="text-sm leading-relaxed">
-                      {seg.simulated.map((c, i) => (
-                        <span
-                          key={i}
-                          className={
-                            c.masked ? 'text-danger-glow' : 'text-fg/60'
-                          }
-                        >
-                          {c.char}
-                        </span>
-                      ))}
+                    <p className="text-sm leading-relaxed text-fg/70">
+                      {sm.simulatedText}
                     </p>
                   </div>
                 ))}

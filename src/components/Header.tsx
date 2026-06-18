@@ -5,18 +5,23 @@ import {
   Download,
   ChevronRight,
   Activity,
+  FileText,
 } from 'lucide-react'
+import ProjectSelector from './ProjectSelector'
 import { useProjectStore, type PanelType } from '@/store/projectStore'
 
 const PANELS: { key: PanelType; label: string; icon: typeof Radio }[] = [
   { key: 'draft', label: '频段草稿', icon: Radio },
   { key: 'noise', label: '噪声层', icon: Volume2 },
   { key: 'verify', label: '解谜校验', icon: Puzzle },
+  { key: 'preview', label: '方案预览', icon: FileText },
 ]
 
 export default function Header() {
-  const { activePanel, setActivePanel, projectName, setProjectName, exportProject } =
+  const { activePanel, setActivePanel, getCurrentProject, exportProject } =
     useProjectStore()
+
+  const proj = getCurrentProject()
 
   const handleExport = () => {
     const data = exportProject()
@@ -24,7 +29,7 @@ export default function Header() {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `${projectName || 'radio-puzzle'}.json`
+    a.download = `${proj.projectName || 'radio-puzzle'}.json`
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -39,12 +44,7 @@ export default function Header() {
           <span className="font-mono text-xs text-amber tracking-widest">RADIO PUZZLE</span>
         </div>
         <div className="w-px h-6 bg-border" />
-        <input
-          type="text"
-          value={projectName}
-          onChange={(e) => setProjectName(e.target.value)}
-          className="bg-transparent border-none text-fg font-sans text-sm font-medium w-40 focus:outline-none focus:border-b focus:border-amber"
-        />
+        <ProjectSelector />
       </div>
 
       <nav className="flex items-center gap-1">

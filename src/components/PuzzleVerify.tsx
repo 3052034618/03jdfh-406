@@ -1,28 +1,23 @@
-import { useState, useMemo } from 'react'
-import { CheckCircle, XCircle, GitBranch, Plus, Trash2, RefreshCw } from 'lucide-react'
+import { useState } from 'react'
+import { CheckCircle, XCircle, GitBranch, Plus, Trash2, RefreshCw, Link2, ArrowRight } from 'lucide-react'
 import { useProjectStore } from '@/store/projectStore'
-import { calculateKeywordMasks } from '@/utils/noiseMasking'
-import { generateReasoningPaths } from '@/utils/reasoningPath'
+import { getGlobalAudibleFragments } from '@/utils/noiseMasking'
+import { generateReasoningPathsFromMasks } from '@/utils/reasoningPath'
 
 export default function PuzzleVerify() {
   const {
-    segments,
-    noiseConfig,
-    correctAnswer,
-    misleadingAnswers,
+    getCurrentProject,
     setCorrectAnswer,
+    setCorrectClueChain,
     addMisleadingAnswer,
     removeMisleadingAnswer,
-    reasoningPaths,
     setReasoningPaths,
   } = useProjectStore()
 
-  const [newMisleading, setNewMisleading] = useState('')
+  const proj = getCurrentProject()
+  const { correctAnswer, correctClueChain, misleadingAnswers, reasoningPaths, segmentMasks } = proj
 
-  const keywordMasks = useMemo(
-    () => calculateKeywordMasks(segments, noiseConfig),
-    [segments, noiseConfig]
-  )
+  const [newMisleading, setNewMisleading] = useState('')
 
   const handleAddMisleading = () => {
     if (newMisleading.trim()) {
@@ -32,13 +27,14 @@ export default function PuzzleVerify() {
   }
 
   const handleGeneratePaths = () => {
-    const paths = generateReasoningPaths(keywordMasks, correctAnswer, misleadingAnswers)
+    const paths = generateReasoningPathsFromMasks(segmentMasks, correctAnswer, misleadingAnswers)
     setReasoningPaths(paths)
   }
 
-  const clearKeywords = keywordMasks.filter((m) => m.level === 'clear').map((m) => m.keyword)
-  const partialKeywords = keywordMasks.filter((m) => m.level === 'partial').map((m) => m.keyword)
-  const maskedKeywords = keywordMasks.filter((m) => m.level === 'masked').map((m) => m.keyword)
+  const { clear: clearKeywords, partial: partialKeywords, masked: maskedKeywords } = getGlobalAudibleFragments(segmentMasks)
+
+  const correctPaths = reasoningPaths.filter((p) => p.isCorrect)
+  const misleadingPaths = reasoningPaths.filter((p) => !p.isCorrect)
 
   return (
     <div className="panel-enter space-y-6">
@@ -61,9 +57,21 @@ export default function PuzzleVerify() {
               value={correctAnswer}
               onChange={(e) => setCorrectAnswer(e.target.value)}
               placeholder="输入谜题的正确答案…"
-              rows={3}
+              rows={2}
               className="w-full px-4 py-3 rounded-sm bg-panel border border-safe/30 text-fg text-sm font-sans
                 placeholder:text-muted resize-none focus:border-safe/60"
+            />
+            <div className="flex items-center gap-2">
+              <Link2 className="w-4 h-4 text-safe-glow/70" />
+              <h4 className="font-mono text-xs text-fgdim tracking-widest uppercase">线索链</h4>
+            </div>
+            <textarea
+              value={correctClueChain}
+              onChange={(e) => setCorrectClueChain(e.target.value)}
+              placeholder="输入从可听片段到正确答案的推理线索链，如：听到「病房」→ 结合「血迹」→ 推断「医院地下室」…"
+              rows={3}
+              className="w-full px-4 py-3 rounded-sm bg-panel border border-safe/20 text-fg text-sm font-sans
+                placeholder:text-muted resize-none focus:border-safe/40"
             />
           </section>
 
@@ -110,27 +118,27 @@ export default function PuzzleVerify() {
 
           <section className="space-y-2">
             <h3 className="font-mono text-xs text-fgdim tracking-widest uppercase">可听片段</h3>
-            <div className="space-y-1 text-xs font-sans">
+            <div className="space-y-1.5 text-xs font-sans">
               {clearKeywords.length > 0 && (
-                <div>
-                  <span className="text-safe-glow">可辨识：</span>
-                  <span className="text-fg/70">{clearKeywords.join('、')}</span>
+                <div className="flex items-start gap-2">
+                  <span className="text-safe-glow flex-shrink-0">可辨识：</span>
+                  <span className="text-fg/70 flex-wrap">{clearKeywords.join('、')}</span>
                 </div>
               )}
               {partialKeywords.length > 0 && (
-                <div>
-                  <span className="text-warn-glow">部分遮蔽：</span>
-                  <span className="text-fg/70">{partialKeywords.join('、')}</span>
+                <div className="flex items-start gap-2">
+                  <span className="text-warn-glow flex-shrink-0">部分遮蔽：</span>
+                  <span className="text-fg/70 flex-wrap">{partialKeywords.join('、')}</span>
                 </div>
               )}
               {maskedKeywords.length > 0 && (
-                <div>
-                  <span className="text-danger-glow">高度遮蔽：</span>
-                  <span className="text-fg/70">{maskedKeywords.join('、')}</span>
+                <div className="flex items-start gap-2">
+                  <span className="text-danger-glow flex-shrink-0">高度遮蔽：</span>
+                  <span className="text-fg/70 flex-wrap">{maskedKeywords.join('、')}</span>
                 </div>
               )}
-              {keywordMasks.length === 0 && (
-                <div className="text-muted">请先生成广播文本</div>
+              {segmentMasks.length === 0 && (
+                <div className="text-muted">请先生成广播文本并调整噪声层</div>
               )}
             </div>
           </section>
@@ -147,8 +155,8 @@ export default function PuzzleVerify() {
         </div>
 
         <div className="col-span-8 space-y-4">
-          <section className="space-y-2">
-            <h3 className="font-mono text-xs text-fgdim tracking-widest uppercase">推理路径图</h3>
+          <section className="space-y-3">
+            <h3 className="font-mono text-xs text-fgdim tracking-widest uppercase">推理路径树</h3>
             {reasoningPaths.length === 0 ? (
               <div className="border border-border rounded-sm bg-void/50 p-8 text-center">
                 <GitBranch className="w-8 h-8 text-muted mx-auto mb-3" />
@@ -157,104 +165,192 @@ export default function PuzzleVerify() {
                 </p>
               </div>
             ) : (
-              <div className="space-y-3">
-                {reasoningPaths.map((path) => (
-                  <div
-                    key={path.id}
-                    className={`
-                      border rounded-sm p-4 transition-all
-                      ${path.isCorrect
-                        ? 'border-safe/30 bg-safe/5'
-                        : 'border-danger/30 bg-danger/5'
-                      }
-                    `}
-                  >
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center gap-2">
-                        {path.isCorrect ? (
-                          <CheckCircle className="w-4 h-4 text-safe-glow" />
-                        ) : (
-                          <XCircle className="w-4 h-4 text-danger-glow" />
-                        )}
-                        <span
-                          className={`font-mono text-sm ${
-                            path.isCorrect ? 'text-safe-glow' : 'text-danger-glow'
-                          }`}
-                        >
-                          {path.isCorrect ? '正确路径' : '误导路径'}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-xs text-muted">
-                          难度 {path.difficulty}
-                        </span>
-                        <div className="flex gap-0.5">
-                          {Array.from({ length: 5 }).map((_, i) => (
-                            <div
-                              key={i}
-                              className={`w-1.5 h-1.5 rounded-full ${
-                                i < path.difficulty
-                                  ? path.isCorrect
-                                    ? 'bg-safe/60'
-                                    : 'bg-danger/60'
-                                  : 'bg-border'
-                              }`}
-                            />
-                          ))}
-                        </div>
-                      </div>
+              <div className="space-y-6">
+                {correctPaths.length > 0 && (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <div className="w-2 h-2 rounded-full bg-safe-glow" />
+                      <h4 className="font-mono text-xs text-safe-glow tracking-widest uppercase">正确路径</h4>
                     </div>
-
-                    {path.fragments.length > 0 && (
-                      <div className="flex gap-1.5 mb-3 flex-wrap">
-                        {path.fragments.map((f, i) => (
-                          <span key={i} className="flex items-center gap-1.5">
-                            <span
-                              className={`px-2 py-0.5 rounded-sm text-xs font-mono ${
-                                path.isCorrect
-                                  ? 'bg-safe/10 text-safe-glow border border-safe/20'
-                                  : 'bg-danger/10 text-danger-glow border border-danger/20'
-                              }`}
-                            >
-                              {f}
-                            </span>
-                            {i < path.fragments.length - 1 && (
-                              <span className="text-muted text-xs">→</span>
-                            )}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-
-                    <div className="space-y-1.5 ml-2">
-                      {path.steps.map((step, i) => (
-                        <div key={i} className="flex items-start gap-2">
-                          <div
-                            className={`w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 text-xs font-mono
-                              ${path.isCorrect
-                                ? 'bg-safe/20 text-safe-glow'
-                                : 'bg-danger/20 text-danger-glow'
-                              }`}
-                          >
-                            {i + 1}
+                    <div className="space-y-4">
+                      {correctPaths.map((path) => (
+                        <div
+                          key={path.id}
+                          className="border border-safe/30 bg-safe/5 rounded-sm p-4 relative"
+                        >
+                          <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-safe-glow/50 rounded-l-sm" />
+                          
+                          <div className="flex items-center justify-between mb-4 ml-2">
+                            <div className="flex items-center gap-2">
+                              <CheckCircle className="w-4 h-4 text-safe-glow" />
+                              <span className="font-mono text-sm text-safe-glow">
+                                {path.conclusion}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono text-xs text-muted">
+                                难度 {path.difficulty}
+                              </span>
+                              <div className="flex gap-0.5">
+                                {Array.from({ length: 5 }).map((_, i) => (
+                                  <div
+                                    key={i}
+                                    className={`w-1.5 h-1.5 rounded-full ${
+                                      i < path.difficulty
+                                        ? 'bg-safe/60'
+                                        : 'bg-border'
+                                    }`}
+                                  />
+                                ))}
+                              </div>
+                            </div>
                           </div>
-                          <span className="text-sm font-sans text-fg/70">{step}</span>
+
+                          <div className="relative pl-8 ml-2">
+                            <div className="absolute left-3 top-4 bottom-4 w-px bg-safe-glow/30 border-l-2 border-dashed border-safe-glow/30" />
+                            
+                            {path.fragments.length > 0 && (
+                              <div className="space-y-3">
+                                {path.fragments.map((fragment, idx) => (
+                                  <div key={idx} className="relative">
+                                    <div className="absolute -left-5 top-1/2 -translate-y-1/2">
+                                      <div className="w-2 h-2 rounded-full bg-safe-glow border-2 border-safe/20" />
+                                    </div>
+                                    {idx < path.fragments.length - 1 && (
+                                      <div className="absolute -left-4 top-full h-3 w-px bg-safe-glow/40" />
+                                    )}
+                                    
+                                    <div className="flex items-center gap-2">
+                                      <span className="px-2.5 py-1 rounded-sm text-xs font-mono bg-safe/15 text-safe-glow border border-safe/30">
+                                        {fragment}
+                                      </span>
+                                      {idx < path.fragments.length - 1 && (
+                                        <ArrowRight className="w-3 h-3 text-safe-glow/50" />
+                                      )}
+                                    </div>
+                                    
+                                    {idx < path.steps.length && (
+                                      <div className="mt-1 ml-1 text-xs font-sans text-fg/50">
+                                        {path.steps[idx]}
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            <div className="mt-4 pt-3 border-t border-safe/20 relative">
+                              <div className="absolute -left-5 top-1/2 -translate-y-1/2">
+                                <div className="w-3 h-3 rounded-full bg-safe-glow flex items-center justify-center">
+                                  <CheckCircle className="w-1.5 h-1.5 text-void" />
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2 ml-1">
+                                <span className="text-xs font-mono text-muted">结论 →</span>
+                                <span className="text-sm font-sans font-medium text-safe-glow">
+                                  &quot;{path.conclusion}&quot;
+                                </span>
+                              </div>
+                            </div>
+                          </div>
                         </div>
                       ))}
                     </div>
+                  </div>
+                )}
 
-                    <div className="mt-3 pt-2 border-t border-border/50">
-                      <span className="text-xs font-mono text-muted">结论 → </span>
-                      <span
-                        className={`text-sm font-sans font-medium ${
-                          path.isCorrect ? 'text-safe-glow' : 'text-danger-glow'
-                        }`}
-                      >
-                        "{path.conclusion}"
-                      </span>
+                {misleadingPaths.length > 0 && (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <div className="w-2 h-2 rounded-full bg-danger-glow" />
+                      <h4 className="font-mono text-xs text-danger-glow tracking-widest uppercase">误导路径</h4>
+                    </div>
+                    <div className="space-y-4">
+                      {misleadingPaths.map((path) => (
+                        <div
+                          key={path.id}
+                          className="border border-danger/30 bg-danger/5 rounded-sm p-4 relative"
+                        >
+                          <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-danger-glow/50 rounded-l-sm" />
+                          
+                          <div className="flex items-center justify-between mb-4 ml-2">
+                            <div className="flex items-center gap-2">
+                              <XCircle className="w-4 h-4 text-danger-glow" />
+                              <span className="font-mono text-sm text-danger-glow">
+                                {path.conclusion}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono text-xs text-muted">
+                                难度 {path.difficulty}
+                              </span>
+                              <div className="flex gap-0.5">
+                                {Array.from({ length: 5 }).map((_, i) => (
+                                  <div
+                                    key={i}
+                                    className={`w-1.5 h-1.5 rounded-full ${
+                                      i < path.difficulty
+                                        ? 'bg-danger/60'
+                                        : 'bg-border'
+                                    }`}
+                                  />
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="relative pl-8 ml-2">
+                            <div className="absolute left-3 top-4 bottom-4 w-px border-l-2 border-dashed border-danger-glow/30" />
+                            
+                            {path.fragments.length > 0 && (
+                              <div className="space-y-3">
+                                {path.fragments.map((fragment, idx) => (
+                                  <div key={idx} className="relative">
+                                    <div className="absolute -left-5 top-1/2 -translate-y-1/2">
+                                      <div className="w-2 h-2 rounded-full bg-danger-glow border-2 border-danger/20" />
+                                    </div>
+                                    {idx < path.fragments.length - 1 && (
+                                      <div className="absolute -left-4 top-full h-3 w-px border-l border-dashed border-danger-glow/40" />
+                                    )}
+                                    
+                                    <div className="flex items-center gap-2">
+                                      <span className="px-2.5 py-1 rounded-sm text-xs font-mono bg-danger/15 text-danger-glow border border-danger/30">
+                                        {fragment}
+                                      </span>
+                                      {idx < path.fragments.length - 1 && (
+                                        <ArrowRight className="w-3 h-3 text-danger-glow/50" />
+                                      )}
+                                    </div>
+                                    
+                                    {idx < path.steps.length && (
+                                      <div className="mt-1 ml-1 text-xs font-sans text-fg/50">
+                                        {path.steps[idx]}
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            <div className="mt-4 pt-3 border-t border-danger/20 relative">
+                              <div className="absolute -left-5 top-1/2 -translate-y-1/2">
+                                <div className="w-3 h-3 rounded-full bg-danger-glow flex items-center justify-center">
+                                  <XCircle className="w-1.5 h-1.5 text-void" />
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2 ml-1">
+                                <span className="text-xs font-mono text-muted">结论 →</span>
+                                <span className="text-sm font-sans font-medium text-danger-glow">
+                                  &quot;{path.conclusion}&quot;
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </div>
-                ))}
+                )}
               </div>
             )}
           </section>
