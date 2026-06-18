@@ -46,6 +46,27 @@ export interface ItemNotes {
   levelDesign: string
 }
 
+export interface ItemNoteCompletion {
+  narrative: boolean
+  audio: boolean
+  levelDesign: boolean
+}
+
+export type DecisionStatus = 'candidate' | 'adopted' | 'eliminated'
+
+export interface ReviewConclusion {
+  adoptedProjectId: string | null
+  adoptedProjectName: string | null
+  eliminatedProjectIds: string[]
+  decisionReasons: Record<string, string>
+  nextSteps: {
+    narrative: string
+    audio: string
+    levelDesign: string
+  }
+  decidedAt: string | null
+}
+
 export interface ReviewTodo {
   itemId: string
   itemType: 'segment' | 'path'
@@ -56,6 +77,11 @@ export interface ReviewTodo {
     audio: string
     levelDesign: string
   }
+  completed: {
+    narrative: boolean
+    audio: boolean
+    levelDesign: boolean
+  }
 }
 
 export interface ReviewMinutes {
@@ -64,12 +90,15 @@ export interface ReviewMinutes {
   approvedCount: number
   pendingCount: number
   riskCount: number
+  completedCount: number
+  uncompletedCount: number
   todoByCategory: {
     narrative: ReviewTodo[]
     audio: ReviewTodo[]
     levelDesign: ReviewTodo[]
   }
   allTodos: ReviewTodo[]
+  conclusion: ReviewConclusion | null
 }
 
 export type PanelType = 'draft' | 'noise' | 'verify' | 'preview' | 'compare'
@@ -94,7 +123,11 @@ export interface ProjectState {
   reasoningPaths: ReasoningPath[]
   segmentNotes: Record<string, ItemNotes>
   pathNotes: Record<string, ItemNotes>
+  noteCompletion: Record<string, ItemNoteCompletion>
   reviewStatus: Record<string, ReviewStatus>
+  decisionStatus: DecisionStatus
+  decisionReason: string
+  reviewConclusion: ReviewConclusion
   createdAt: string
   updatedAt: string
 }
@@ -129,7 +162,10 @@ interface ProjectStore extends ProjectState {
   setActivePanel: (panel: PanelType) => void
   setSegmentNote: (segmentId: string, category: keyof ItemNotes, text: string) => void
   setPathNote: (pathId: string, category: keyof ItemNotes, text: string) => void
+  setNoteCompletion: (itemId: string, category: keyof ItemNoteCompletion, completed: boolean) => void
   setReviewStatus: (itemId: string, status: ReviewStatus) => void
+  setDecisionStatus: (projectId: string, status: DecisionStatus, reason: string) => void
+  setReviewConclusion: (conclusion: ReviewConclusion) => void
   generateReviewMinutes: (projectId?: string) => ReviewMinutes
   exportProject: (projectId?: string) => object
 }
@@ -189,7 +225,11 @@ function migrateProject(project: Partial<ProjectState>): ProjectState {
     reasoningPaths: project.reasoningPaths || base.reasoningPaths,
     segmentNotes: project.segmentNotes || base.segmentNotes,
     pathNotes: project.pathNotes || base.pathNotes,
+    noteCompletion: project.noteCompletion || base.noteCompletion,
     reviewStatus: project.reviewStatus || base.reviewStatus,
+    decisionStatus: project.decisionStatus || base.decisionStatus,
+    decisionReason: project.decisionReason ?? base.decisionReason,
+    reviewConclusion: project.reviewConclusion || base.reviewConclusion,
     createdAt: project.createdAt || base.createdAt,
     updatedAt: project.updatedAt || base.updatedAt,
   }
@@ -219,7 +259,18 @@ function createDefaultProject(name: string): ProjectState {
     reasoningPaths: [],
     segmentNotes: {},
     pathNotes: {},
+    noteCompletion: {},
     reviewStatus: {},
+    decisionStatus: 'candidate',
+    decisionReason: '',
+    reviewConclusion: {
+      adoptedProjectId: null,
+      adoptedProjectName: null,
+      eliminatedProjectIds: [],
+      decisionReasons: {},
+      nextSteps: { narrative: '', audio: '', levelDesign: '' },
+      decidedAt: null,
+    },
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   }
@@ -653,6 +704,53 @@ export const useProjectStore = create<ProjectStore>()(
         })
       },
 
+      setNoteCompletion: (itemId, category, completed) => {
+        const state = get()
+        const id = state.currentProjectId
+        const proj = state.projects[id]
+        const existing = proj.noteCompletion[itemId] || { narrative: false, audio: false, levelDesign: false }
+        const updatedProject = {
+          ...proj,
+          noteCompletion: { ...proj.noteCompletion, [itemId]: { ...existing, [category]: completed } },
+          updatedAt: new Date().toISOString(),
+        }
+        set({
+          ...updatedProject,
+          projects: { ...state.projects, [id]: updatedProject },
+        })
+      },
+
+      setDecisionStatus: (projectId, status, reason) => {
+        const state = get()
+        const proj = state.projects[projectId]
+        if (!proj) return
+        const updatedProject = {
+          ...proj,
+          decisionStatus: status,
+          decisionReason: reason,
+          updatedAt: new Date().toISOString(),
+        }
+        set({
+          ...(state.currentProjectId === projectId ? updatedProject : {}),
+          projects: { ...state.projects, [projectId]: updatedProject },
+        })
+      },
+
+      setReviewConclusion: (conclusion) => {
+        const state = get()
+        const id = state.currentProjectId
+        const proj = state.projects[id]
+        const updatedProject = {
+          ...proj,
+          reviewConclusion: conclusion,
+          updatedAt: new Date().toISOString(),
+        }
+        set({
+          ...updatedProject,
+          projects: { ...state.projects, [id]: updatedProject },
+        })
+      },
+
       generateReviewMinutes: (projectId?: string): ReviewMinutes => {
         const state = get()
         const id = projectId || state.currentProjectId
@@ -664,8 +762,11 @@ export const useProjectStore = create<ProjectStore>()(
             approvedCount: 0,
             pendingCount: 0,
             riskCount: 0,
+            completedCount: 0,
+            uncompletedCount: 0,
             todoByCategory: { narrative: [], audio: [], levelDesign: [] },
             allTodos: [],
+            conclusion: null,
           }
         }
 
@@ -675,6 +776,7 @@ export const useProjectStore = create<ProjectStore>()(
         for (const seg of migrated.segments) {
           const status = migrated.reviewStatus[seg.id] || 'pending'
           const notes = migrated.segmentNotes[seg.id] || { narrative: '', audio: '', levelDesign: '' }
+          const completion = migrated.noteCompletion[seg.id] || { narrative: false, audio: false, levelDesign: false }
           const hasNotes = notes.narrative || notes.audio || notes.levelDesign
           if (status !== 'approved' || hasNotes) {
             todos.push({
@@ -683,6 +785,7 @@ export const useProjectStore = create<ProjectStore>()(
               itemTitle: `频段 ${seg.index}`,
               status,
               notes,
+              completed: completion,
             })
           }
         }
@@ -690,6 +793,7 @@ export const useProjectStore = create<ProjectStore>()(
         for (const path of migrated.reasoningPaths) {
           const status = migrated.reviewStatus[path.id] || 'pending'
           const notes = migrated.pathNotes[path.id] || { narrative: '', audio: '', levelDesign: '' }
+          const completion = migrated.noteCompletion[path.id] || { narrative: false, audio: false, levelDesign: false }
           const hasNotes = notes.narrative || notes.audio || notes.levelDesign
           if (status !== 'approved' || hasNotes) {
             todos.push({
@@ -698,12 +802,35 @@ export const useProjectStore = create<ProjectStore>()(
               itemTitle: path.isCorrect ? `正确路径：${path.conclusion}` : `误导路径：${path.conclusion}`,
               status,
               notes,
+              completed: completion,
             })
           }
         }
 
+        const isCategoryCompleted = (t: ReviewTodo, cat: keyof ItemNoteCompletion) => t.completed[cat]
+        const completedCount = todos.filter((t) =>
+          isCategoryCompleted(t, 'narrative') && isCategoryCompleted(t, 'audio') && isCategoryCompleted(t, 'levelDesign')
+        ).length
+
         const filterByCategory = (cat: keyof ItemNotes) =>
           todos.filter((t) => t.status !== 'approved' || t.notes[cat])
+
+        const allProjects = state.projects
+        const adoptedProject = Object.values(allProjects).find((p) => p.decisionStatus === 'adopted')
+        const conclusion: ReviewConclusion = {
+          adoptedProjectId: adoptedProject?.id || null,
+          adoptedProjectName: adoptedProject?.projectName || null,
+          eliminatedProjectIds: Object.values(allProjects)
+            .filter((p) => p.decisionStatus === 'eliminated')
+            .map((p) => p.id),
+          decisionReasons: Object.fromEntries(
+            Object.values(allProjects)
+              .filter((p) => p.decisionReason)
+              .map((p) => [p.id, p.decisionReason])
+          ),
+          nextSteps: migrated.reviewConclusion?.nextSteps || { narrative: '', audio: '', levelDesign: '' },
+          decidedAt: adoptedProject ? new Date().toISOString() : null,
+        }
 
         return {
           generatedAt: new Date().toISOString(),
@@ -711,12 +838,15 @@ export const useProjectStore = create<ProjectStore>()(
           approvedCount: todos.filter((t) => t.status === 'approved').length,
           pendingCount: todos.filter((t) => t.status === 'pending').length,
           riskCount: todos.filter((t) => t.status === 'risk').length,
+          completedCount,
+          uncompletedCount: todos.length - completedCount,
           todoByCategory: {
             narrative: filterByCategory('narrative'),
             audio: filterByCategory('audio'),
             levelDesign: filterByCategory('levelDesign'),
           },
           allTodos: todos,
+          conclusion,
         }
       },
 
@@ -748,6 +878,7 @@ export const useProjectStore = create<ProjectStore>()(
             originalText: s.text,
             keywords: s.keywords,
             notes: proj.segmentNotes[s.id] || null,
+            noteCompletion: proj.noteCompletion[s.id] || null,
             reviewStatus: proj.reviewStatus[s.id] || null,
           })),
           noiseLayer: {
@@ -786,8 +917,11 @@ export const useProjectStore = create<ProjectStore>()(
             steps: rp.steps,
             difficulty: rp.difficulty,
             notes: proj.pathNotes[rp.id] || null,
+            noteCompletion: proj.noteCompletion[rp.id] || null,
             reviewStatus: proj.reviewStatus[rp.id] || null,
           })),
+          decisionStatus: proj.decisionStatus,
+          decisionReason: proj.decisionReason,
           reviewSummary: {
             approved: Object.entries(proj.reviewStatus).filter(([, v]) => v === 'approved').map(([k]) => k),
             pending: Object.entries(proj.reviewStatus).filter(([, v]) => v === 'pending').map(([k]) => k),

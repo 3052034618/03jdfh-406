@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
-import { useProjectStore, SCENE_LABELS, type ProjectState } from '@/store/projectStore'
-import { GitCompare, Volume2, CheckCircle2, XCircle, Brain, AlertTriangle, Trophy, ChevronDown, ChevronUp, Radio, ExternalLink, Download, FileText } from 'lucide-react'
+import { useProjectStore, SCENE_LABELS, type ProjectState, type DecisionStatus } from '@/store/projectStore'
+import { GitCompare, Volume2, CheckCircle2, XCircle, Brain, AlertTriangle, Trophy, ChevronDown, ChevronUp, Radio, ExternalLink, Download, FileText, Star, Minus } from 'lucide-react'
 
 interface ProjectMetrics {
   id: string
@@ -111,7 +111,7 @@ function ComparisonBar({
 }
 
 export default function ProjectComparison() {
-  const { projects, switchProject, setActivePanel, exportProject } = useProjectStore()
+  const { projects, switchProject, setActivePanel, exportProject, setDecisionStatus } = useProjectStore()
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const projectList = Object.values(projects)
 
@@ -182,6 +182,7 @@ export default function ProjectComparison() {
           const isRec = m.id === recommendedId
           const isExpanded = expanded[m.id] || false
           const project = projects[m.id]
+          const decisionStatus: DecisionStatus = project?.decisionStatus || 'candidate'
           const ChevronIcon = isExpanded ? ChevronUp : ChevronDown
 
           const displaySegments = project?.segments?.slice(0, 3) || []
@@ -217,7 +218,11 @@ export default function ProjectComparison() {
             <div
               key={m.id}
               className={`relative rounded-sm border p-4 space-y-4 ${
-                isRec
+                decisionStatus === 'adopted'
+                  ? 'bg-safe/5 border-safe/40 shadow-[0_0_12px_rgba(74,103,65,0.12)]'
+                  : decisionStatus === 'eliminated'
+                  ? 'bg-panel/30 border-border opacity-60'
+                  : isRec
                   ? 'bg-amber/5 border-amber/40 shadow-[0_0_12px_rgba(245,158,11,0.08)]'
                   : 'bg-panel/30 border-border'
               }`}
@@ -235,7 +240,13 @@ export default function ProjectComparison() {
               >
                 <div className="flex-1">
                   <div className="flex items-center gap-2">
-                    <h3 className="font-sans text-sm text-fg font-semibold truncate">{m.projectName}</h3>
+                    <h3 className={`font-sans text-sm text-fg font-semibold truncate ${decisionStatus === 'eliminated' ? 'line-through text-fgdim' : ''}`}>{m.projectName}</h3>
+                    {decisionStatus === 'adopted' && (
+                      <span className="px-1.5 py-0.5 text-[10px] font-mono rounded-sm bg-safe/20 text-safe-glow border border-safe/40">采用</span>
+                    )}
+                    {decisionStatus === 'eliminated' && (
+                      <span className="px-1.5 py-0.5 text-[10px] font-mono rounded-sm bg-danger/20 text-danger-glow border border-danger/40">淘汰</span>
+                    )}
                   </div>
                   <span className="font-mono text-xs text-fgdim">{m.sceneLabel}</span>
                 </div>
@@ -362,6 +373,54 @@ export default function ProjectComparison() {
                       </div>
                     </div>
                   )}
+
+                  <div className="space-y-2 pt-2 border-t border-border/50">
+                    <div className="flex items-center gap-2">
+                      <Star className="w-3.5 h-3.5 text-amber" />
+                      <span className="font-mono text-xs text-amber uppercase tracking-wider">决策</span>
+                    </div>
+                    <div className="flex gap-2">
+                      {([
+                        { status: 'candidate' as DecisionStatus, label: '候选', icon: Minus, activeClass: 'bg-amber/15 text-amber border-amber/30', inactiveClass: 'border-amber/30 text-amber/60' },
+                        { status: 'adopted' as DecisionStatus, label: '采用', icon: Star, activeClass: 'bg-safe/20 text-safe-glow border-safe/40', inactiveClass: 'border-safe/40 text-safe/60' },
+                        { status: 'eliminated' as DecisionStatus, label: '淘汰', icon: XCircle, activeClass: 'bg-danger/20 text-danger-glow border-danger/40', inactiveClass: 'border-danger/40 text-danger/60' },
+                      ]).map(({ status, label, icon: BtnIcon, activeClass, inactiveClass }) => (
+                        <button
+                          key={status}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            const currentReason = project?.decisionReason || ''
+                            if (status === 'adopted') {
+                              setDecisionStatus(m.id, 'adopted', currentReason)
+                              Object.keys(projects).forEach((otherId) => {
+                                if (otherId !== m.id) {
+                                  setDecisionStatus(otherId, 'eliminated', '未采用')
+                                }
+                              })
+                            } else {
+                              setDecisionStatus(m.id, status, currentReason)
+                            }
+                          }}
+                          className={`flex items-center gap-1 px-2 py-1 text-xs font-mono rounded-sm border transition-all duration-200 ${
+                            decisionStatus === status ? activeClass : inactiveClass
+                          }`}
+                        >
+                          <BtnIcon className="w-3 h-3" />
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    <textarea
+                      value={project?.decisionReason || ''}
+                      onChange={(e) => {
+                        e.stopPropagation()
+                        setDecisionStatus(m.id, decisionStatus, e.target.value)
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                      placeholder="决策理由..."
+                      className="w-full h-16 px-2 py-1.5 rounded-sm bg-void border border-border text-fg font-sans text-xs resize-none focus:outline-none focus:border-amber/50"
+                    />
+                  </div>
 
                   <div className="flex gap-2 pt-1">
                     <button

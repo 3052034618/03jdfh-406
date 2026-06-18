@@ -26,6 +26,10 @@ import {
   Filter,
   ClipboardList,
   Download,
+  Circle,
+  Stamp,
+  Target,
+  Ban,
 } from 'lucide-react'
 import {
   useProjectStore,
@@ -35,7 +39,9 @@ import {
   type KeywordMaskStatus,
   type ReviewStatus,
   type ItemNotes,
+  type ItemNoteCompletion,
   type ReviewMinutes,
+  type ReviewConclusion,
 } from '@/store/projectStore'
 
 type FilterType = 'all' | 'approved' | 'pending' | 'risk'
@@ -130,10 +136,14 @@ function NoteEditor({
   itemId,
   notes,
   onSetNote,
+  noteCompletion,
+  onToggleCompletion,
 }: {
   itemId: string
   notes: ItemNotes
   onSetNote: (id: string, category: keyof ItemNotes, text: string) => void
+  noteCompletion: ItemNoteCompletion
+  onToggleCompletion: (id: string, category: keyof ItemNoteCompletion) => void
 }) {
   const [expanded, setExpanded] = useState(false)
   const [activeTab, setActiveTab] = useState<keyof ItemNotes>('narrative')
@@ -173,6 +183,17 @@ function NoteEditor({
                 <Icon className="w-3 h-3" />
                 {label}
                 {notes[key] && <span className="w-1 h-1 rounded-full bg-amber/60" />}
+                <span
+                  role="checkbox"
+                  onClick={(e) => { e.stopPropagation(); onToggleCompletion(itemId, key) }}
+                  className="cursor-pointer ml-0.5"
+                >
+                  {noteCompletion[key] ? (
+                    <CheckCircle2 className="w-3.5 h-3.5 text-safe-glow" />
+                  ) : (
+                    <Circle className="w-3.5 h-3.5 text-fgdim" />
+                  )}
+                </span>
               </button>
             ))}
           </div>
@@ -215,7 +236,7 @@ function ReviewSummary({ reviewStatus }: { reviewStatus: Record<string, ReviewSt
 }
 
 export default function SolutionPreview() {
-  const { getCurrentProject, exportProject, setSegmentNote, setPathNote, setReviewStatus, generateReviewMinutes } =
+  const { getCurrentProject, exportProject, setSegmentNote, setPathNote, setReviewStatus, setNoteCompletion, setReviewConclusion, generateReviewMinutes, projects } =
     useProjectStore()
   const proj = getCurrentProject()
   const exported = exportProject() as Record<string, unknown>
@@ -264,6 +285,11 @@ export default function SolutionPreview() {
     setReviewStatus(id, status)
   }
 
+  const handleToggleCompletion = (id: string, category: keyof ItemNoteCompletion) => {
+    const current = proj.noteCompletion[id]?.[category] ?? false
+    setNoteCompletion(id, category, !current)
+  }
+
   const matchesFilter = (itemId: string) => {
     if (filter === 'all') return true
     return proj.reviewStatus[itemId] === filter
@@ -287,8 +313,24 @@ export default function SolutionPreview() {
   }
 
   const handleExportMinutes = () => {
-    exportProject()
-    console.log('评审纪要已导出')
+    const data = exportProject()
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `review-minutes-${proj.projectName}.json`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
+  const adoptedProject = Object.values(projects).find((p) => p.decisionStatus === 'adopted')
+
+  const filterLabelMap: Record<string, string> = {
+    approved: '通过',
+    pending: '待改',
+    risk: '风险',
   }
 
   const renderSceneInfoCard = () => (
@@ -445,6 +487,7 @@ export default function SolutionPreview() {
     if (!seg) return null
     const mask = proj.segmentMasks.find((sm) => sm.segmentId === seg.id)
     const notes = proj.segmentNotes[seg.id] || { narrative: '', audio: '', levelDesign: '' }
+    const completion = proj.noteCompletion[seg.id] || { narrative: false, audio: false, levelDesign: false }
     return (
       <div className="border border-border rounded-sm bg-panel/50 overflow-hidden">
         <div className="flex items-center justify-between px-4 py-2 bg-surface/80 border-b border-border">
@@ -513,7 +556,7 @@ export default function SolutionPreview() {
               onSetStatus={handleSetReviewStatus}
             />
           </div>
-          <NoteEditor itemId={seg.id} notes={notes} onSetNote={handleSetSegmentNote} />
+          <NoteEditor itemId={seg.id} notes={notes} onSetNote={handleSetSegmentNote} noteCompletion={completion} onToggleCompletion={handleToggleCompletion} />
         </div>
       </div>
     )
@@ -523,6 +566,7 @@ export default function SolutionPreview() {
     const rp = proj.reasoningPaths.find((p) => p.id === pathId)
     if (!rp) return null
     const notes = proj.pathNotes[rp.id] || { narrative: '', audio: '', levelDesign: '' }
+    const completion = proj.noteCompletion[rp.id] || { narrative: false, audio: false, levelDesign: false }
     return (
       <div
         className={`border rounded-sm bg-panel/50 overflow-hidden ${
@@ -576,7 +620,7 @@ export default function SolutionPreview() {
               onSetStatus={handleSetReviewStatus}
             />
           </div>
-          <NoteEditor itemId={rp.id} notes={notes} onSetNote={handleSetPathNote} />
+          <NoteEditor itemId={rp.id} notes={notes} onSetNote={handleSetPathNote} noteCompletion={completion} onToggleCompletion={handleToggleCompletion} />
         </div>
       </div>
     )
@@ -764,6 +808,7 @@ export default function SolutionPreview() {
             proj.segments.filter((s) => matchesFilter(s.id)).map((seg) => {
               const mask = proj.segmentMasks.find((sm) => sm.segmentId === seg.id)
               const notes = proj.segmentNotes[seg.id] || { narrative: '', audio: '', levelDesign: '' }
+              const completion = proj.noteCompletion[seg.id] || { narrative: false, audio: false, levelDesign: false }
               const hasNotes = notes.narrative || notes.audio || notes.levelDesign
               return (
                 <div key={seg.id} className="p-4">
@@ -832,7 +877,7 @@ export default function SolutionPreview() {
                       onSetStatus={handleSetReviewStatus}
                     />
                   </div>
-                  <NoteEditor itemId={seg.id} notes={notes} onSetNote={handleSetSegmentNote} />
+                  <NoteEditor itemId={seg.id} notes={notes} onSetNote={handleSetSegmentNote} noteCompletion={completion} onToggleCompletion={handleToggleCompletion} />
                 </div>
               )
             })
@@ -887,6 +932,7 @@ export default function SolutionPreview() {
               <div className="space-y-3 max-h-64 overflow-y-auto">
                 {proj.reasoningPaths.filter((rp) => matchesFilter(rp.id)).map((rp) => {
                   const notes = proj.pathNotes[rp.id] || { narrative: '', audio: '', levelDesign: '' }
+                  const completion = proj.noteCompletion[rp.id] || { narrative: false, audio: false, levelDesign: false }
                   const hasNotes = notes.narrative || notes.audio || notes.levelDesign
                   return (
                     <div
@@ -946,7 +992,7 @@ export default function SolutionPreview() {
                           onSetStatus={handleSetReviewStatus}
                         />
                       </div>
-                      <NoteEditor itemId={rp.id} notes={notes} onSetNote={handleSetPathNote} />
+                      <NoteEditor itemId={rp.id} notes={notes} onSetNote={handleSetPathNote} noteCompletion={completion} onToggleCompletion={handleToggleCompletion} />
                     </div>
                   )
                 })}
@@ -1099,7 +1145,7 @@ export default function SolutionPreview() {
         </div>
         <div className="flex items-center gap-3">
           <button
-            onClick={scrollToMinutes}
+            onClick={() => { setMinutesExpanded(true); setTimeout(scrollToMinutes, 50) }}
             className="flex items-center gap-1 px-3 py-1.5 text-xs font-mono bg-amber/15 text-amber border border-amber/30 rounded-sm hover:bg-amber/25 transition-colors"
           >
             <ClipboardList className="w-3.5 h-3.5" />
@@ -1126,7 +1172,16 @@ export default function SolutionPreview() {
           </div>
         </div>
       </div>
-      {renderCurrentCard()}
+      {filteredCardIds.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-12 text-muted">
+          <AlertCircle className="w-8 h-8 mb-3" />
+          <p className="text-sm font-mono">
+            没有匹配的{filterLabelMap[filter] || ''}项
+          </p>
+        </div>
+      ) : (
+        renderCurrentCard()
+      )}
     </div>
   )
 
@@ -1138,6 +1193,12 @@ export default function SolutionPreview() {
             <Eye className="w-4 h-4 text-amber" />
             <h2 className="font-mono text-lg text-amber tracking-wide">方案预览</h2>
           </div>
+          {adoptedProject && (
+            <span className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-mono bg-safe/15 text-safe-glow border border-safe/30 rounded-sm">
+              <Stamp className="w-3 h-3" />
+              采用方案: {adoptedProject.projectName}
+            </span>
+          )}
           <div className="h-px flex-1 bg-gradient-to-r from-amber/30 to-transparent" />
           <ReviewSummary reviewStatus={proj.reviewStatus} />
         </div>
@@ -1263,24 +1324,117 @@ export default function SolutionPreview() {
               }
               return (
                 <div className="space-y-2 max-h-64 overflow-y-auto">
-                  {todos.map((todo, i) => (
-                    <div key={i} className="border border-border rounded-sm bg-void/30 p-3">
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-mono text-fgdim">
-                            {todo.itemType === 'segment' ? '广播片段' : '推理路径'}
-                          </span>
-                          <span className="text-sm font-sans text-fg">{todo.itemTitle}</span>
+                  {todos.map((todo, i) => {
+                    const isCompleted = todo.completed[minutesTab]
+                    return (
+                      <div key={i} className={`border border-border rounded-sm bg-void/30 p-3 ${isCompleted ? 'opacity-60' : ''}`}>
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className="cursor-pointer"
+                              onClick={() => handleToggleCompletion(todo.itemId, minutesTab)}
+                            >
+                              {isCompleted ? (
+                                <CheckCircle2 className="w-3.5 h-3.5 text-safe-glow" />
+                              ) : (
+                                <Circle className="w-3.5 h-3.5 text-fgdim" />
+                              )}
+                            </span>
+                            <span className="text-xs font-mono text-fgdim">
+                              {todo.itemType === 'segment' ? '广播片段' : '推理路径'}
+                            </span>
+                            <span className={`text-sm font-sans ${isCompleted ? 'line-through text-muted' : 'text-fg'}`}>
+                              {todo.itemTitle}
+                            </span>
+                          </div>
+                          <ReviewBadge status={todo.status} />
                         </div>
-                        <ReviewBadge status={todo.status} />
+                        {todo.notes[minutesTab] && (
+                          <p className={`text-xs bg-panel/50 rounded-sm p-2 border border-border/50 ${isCompleted ? 'line-through text-muted' : 'text-fgdim'}`}>
+                            {todo.notes[minutesTab]}
+                          </p>
+                        )}
                       </div>
-                      {todo.notes[minutesTab] && (
-                        <p className="text-xs text-fgdim bg-panel/50 rounded-sm p-2 border border-border/50">
-                          {todo.notes[minutesTab]}
-                        </p>
-                      )}
+                    )
+                  })}
+                </div>
+              )
+            })()}
+            {(() => {
+              const minutes = generateReviewMinutes()
+              const conclusion = minutes.conclusion
+              if (!conclusion) return null
+              return (
+                <div className="mt-4 bg-surface/50 rounded-sm p-3">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Stamp className="w-4 h-4 text-amber" />
+                    <h4 className="font-mono text-xs text-fgdim tracking-widest uppercase">评审结论</h4>
+                  </div>
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <Target className="w-3.5 h-3.5 text-safe-glow" />
+                      <span className="text-xs font-mono text-muted">采用方案:</span>
+                      <span className="text-sm text-fg">{conclusion.adoptedProjectName || '未决定'}</span>
                     </div>
-                  ))}
+                    {conclusion.eliminatedProjectIds.length > 0 && (
+                      <div className="flex items-start gap-2">
+                        <Ban className="w-3.5 h-3.5 text-danger-glow mt-0.5" />
+                        <div>
+                          <span className="text-xs font-mono text-muted">驳回方案:</span>
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {conclusion.eliminatedProjectIds.map((id) => {
+                              const p = projects[id]
+                              return p ? (
+                                <span key={id} className="px-2 py-0.5 text-xs font-mono bg-danger/10 text-danger-glow rounded-sm">
+                                  {p.projectName}
+                                </span>
+                              ) : null
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    {Object.entries(conclusion.decisionReasons).length > 0 && (
+                      <div>
+                        <span className="text-xs font-mono text-muted">选择理由:</span>
+                        <div className="mt-1 space-y-1">
+                          {Object.entries(conclusion.decisionReasons).map(([id, reason]) => {
+                            const p = projects[id]
+                            return (
+                              <div key={id} className="text-xs text-fgdim">
+                                <span className="text-amber">{p?.projectName || id}</span>: {reason}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )}
+                    <div>
+                      <span className="text-xs font-mono text-muted">下一步待办:</span>
+                      <div className="mt-2 space-y-2">
+                        {([
+                          { key: 'narrative' as const, label: '编剧' },
+                          { key: 'audio' as const, label: '音频' },
+                          { key: 'levelDesign' as const, label: '关卡' },
+                        ]).map(({ key, label }) => (
+                          <div key={key}>
+                            <span className="text-xs font-mono text-fgdim">{label}</span>
+                            <textarea
+                              value={proj.reviewConclusion.nextSteps[key]}
+                              onChange={(e) => {
+                                setReviewConclusion({
+                                  ...proj.reviewConclusion,
+                                  nextSteps: { ...proj.reviewConclusion.nextSteps, [key]: e.target.value }
+                                })
+                              }}
+                              className="w-full h-16 px-2 py-1.5 text-xs font-sans bg-void/50 border border-border rounded-sm text-fg placeholder:text-muted/50 focus:outline-none focus:border-amber/40 resize-none mt-1"
+                              placeholder={`输入${label}待办...`}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
                 </div>
               )
             })()}
