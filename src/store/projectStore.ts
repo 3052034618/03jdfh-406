@@ -46,6 +46,32 @@ export interface ItemNotes {
   levelDesign: string
 }
 
+export interface ReviewTodo {
+  itemId: string
+  itemType: 'segment' | 'path'
+  itemTitle: string
+  status: ReviewStatus
+  notes: {
+    narrative: string
+    audio: string
+    levelDesign: string
+  }
+}
+
+export interface ReviewMinutes {
+  generatedAt: string
+  totalItems: number
+  approvedCount: number
+  pendingCount: number
+  riskCount: number
+  todoByCategory: {
+    narrative: ReviewTodo[]
+    audio: ReviewTodo[]
+    levelDesign: ReviewTodo[]
+  }
+  allTodos: ReviewTodo[]
+}
+
 export type PanelType = 'draft' | 'noise' | 'verify' | 'preview' | 'compare'
 export type SceneLocation = 'abandoned_hospital' | 'midnight_highway' | 'underground_station' | 'lighthouse' | 'cabin' | 'custom'
 export type BroadcastTone = 'official' | 'personal' | 'emergency' | 'mechanical' | 'ritual'
@@ -104,6 +130,7 @@ interface ProjectStore extends ProjectState {
   setSegmentNote: (segmentId: string, category: keyof ItemNotes, text: string) => void
   setPathNote: (pathId: string, category: keyof ItemNotes, text: string) => void
   setReviewStatus: (itemId: string, status: ReviewStatus) => void
+  generateReviewMinutes: (projectId?: string) => ReviewMinutes
   exportProject: (projectId?: string) => object
 }
 
@@ -138,6 +165,34 @@ export const ERA_LABELS: Record<number, string> = {
 
 function generateId(): string {
   return `proj_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+}
+
+function migrateProject(project: Partial<ProjectState>): ProjectState {
+  const base = createDefaultProject(project.projectName || '已迁移项目')
+  return {
+    ...base,
+    ...project,
+    id: project.id || base.id,
+    projectName: project.projectName || base.projectName,
+    sceneLocation: project.sceneLocation || base.sceneLocation,
+    customSceneName: project.customSceneName || base.customSceneName,
+    era: project.era || base.era,
+    broadcastTone: project.broadcastTone || base.broadcastTone,
+    interferenceLevel: project.interferenceLevel || base.interferenceLevel,
+    playerClues: project.playerClues || base.playerClues,
+    segments: project.segments || base.segments,
+    noiseConfig: { ...base.noiseConfig, ...(project.noiseConfig || {}) },
+    segmentMasks: project.segmentMasks || base.segmentMasks,
+    correctAnswer: project.correctAnswer || base.correctAnswer,
+    correctClueChain: project.correctClueChain || base.correctClueChain,
+    misleadingAnswers: project.misleadingAnswers || base.misleadingAnswers,
+    reasoningPaths: project.reasoningPaths || base.reasoningPaths,
+    segmentNotes: project.segmentNotes || base.segmentNotes,
+    pathNotes: project.pathNotes || base.pathNotes,
+    reviewStatus: project.reviewStatus || base.reviewStatus,
+    createdAt: project.createdAt || base.createdAt,
+    updatedAt: project.updatedAt || base.updatedAt,
+  }
 }
 
 function createDefaultProject(name: string): ProjectState {
@@ -184,7 +239,8 @@ export const useProjectStore = create<ProjectStore>()(
 
       getCurrentProject: () => {
         const state = get()
-        return state.projects[state.currentProjectId] || createDefaultProject('空项目')
+        const proj = state.projects[state.currentProjectId]
+        return proj ? migrateProject(proj) : createDefaultProject('空项目')
       },
 
       createProject: (name) => {
@@ -597,6 +653,73 @@ export const useProjectStore = create<ProjectStore>()(
         })
       },
 
+      generateReviewMinutes: (projectId?: string): ReviewMinutes => {
+        const state = get()
+        const id = projectId || state.currentProjectId
+        const proj = state.projects[id]
+        if (!proj) {
+          return {
+            generatedAt: new Date().toISOString(),
+            totalItems: 0,
+            approvedCount: 0,
+            pendingCount: 0,
+            riskCount: 0,
+            todoByCategory: { narrative: [], audio: [], levelDesign: [] },
+            allTodos: [],
+          }
+        }
+
+        const migrated = migrateProject(proj)
+        const todos: ReviewTodo[] = []
+
+        for (const seg of migrated.segments) {
+          const status = migrated.reviewStatus[seg.id] || 'pending'
+          const notes = migrated.segmentNotes[seg.id] || { narrative: '', audio: '', levelDesign: '' }
+          const hasNotes = notes.narrative || notes.audio || notes.levelDesign
+          if (status !== 'approved' || hasNotes) {
+            todos.push({
+              itemId: seg.id,
+              itemType: 'segment',
+              itemTitle: `频段 ${seg.index}`,
+              status,
+              notes,
+            })
+          }
+        }
+
+        for (const path of migrated.reasoningPaths) {
+          const status = migrated.reviewStatus[path.id] || 'pending'
+          const notes = migrated.pathNotes[path.id] || { narrative: '', audio: '', levelDesign: '' }
+          const hasNotes = notes.narrative || notes.audio || notes.levelDesign
+          if (status !== 'approved' || hasNotes) {
+            todos.push({
+              itemId: path.id,
+              itemType: 'path',
+              itemTitle: path.isCorrect ? `正确路径：${path.conclusion}` : `误导路径：${path.conclusion}`,
+              status,
+              notes,
+            })
+          }
+        }
+
+        const filterByCategory = (cat: keyof ItemNotes) =>
+          todos.filter((t) => t.status !== 'approved' || t.notes[cat])
+
+        return {
+          generatedAt: new Date().toISOString(),
+          totalItems: todos.length,
+          approvedCount: todos.filter((t) => t.status === 'approved').length,
+          pendingCount: todos.filter((t) => t.status === 'pending').length,
+          riskCount: todos.filter((t) => t.status === 'risk').length,
+          todoByCategory: {
+            narrative: filterByCategory('narrative'),
+            audio: filterByCategory('audio'),
+            levelDesign: filterByCategory('levelDesign'),
+          },
+          allTodos: todos,
+        }
+      },
+
       exportProject: (projectId) => {
         const state = get()
         const id = projectId || state.currentProjectId
@@ -670,6 +793,7 @@ export const useProjectStore = create<ProjectStore>()(
             pending: Object.entries(proj.reviewStatus).filter(([, v]) => v === 'pending').map(([k]) => k),
             risk: Object.entries(proj.reviewStatus).filter(([, v]) => v === 'risk').map(([k]) => k),
           },
+          reviewMinutes: get().generateReviewMinutes(id),
           reviewerNotes: {
             forDesigner: `场景：${SCENE_LABELS[proj.sceneLocation]} | 年代：${ERA_LABELS[proj.era]} | 口吻：${TONE_LABELS[proj.broadcastTone]} | 干扰等级：${proj.interferenceLevel}`,
             forNarrative: `玩家已知线索：${proj.playerClues || '无'}；正确答案：${proj.correctAnswer || '未设置'}；误导答案：${proj.misleadingAnswers.length} 个`,
@@ -685,6 +809,14 @@ export const useProjectStore = create<ProjectStore>()(
         projects: state.projects,
         currentProjectId: state.currentProjectId,
       }),
+      onRehydrateStorage: () => (state) => {
+        if (!state) return
+        const migratedProjects: Record<string, ProjectState> = {}
+        for (const [id, proj] of Object.entries(state.projects)) {
+          migratedProjects[id] = migrateProject(proj)
+        }
+        state.projects = migratedProjects
+      },
     }
   )
 )

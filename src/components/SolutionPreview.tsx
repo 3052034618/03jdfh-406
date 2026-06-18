@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import {
   Eye,
   MapPin,
@@ -16,11 +16,16 @@ import {
   FileText,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
   MessageSquare,
   ThumbsUp,
   AlertCircle,
   MinusCircle,
   PenLine,
+  Filter,
+  ClipboardList,
+  Download,
 } from 'lucide-react'
 import {
   useProjectStore,
@@ -30,7 +35,10 @@ import {
   type KeywordMaskStatus,
   type ReviewStatus,
   type ItemNotes,
+  type ReviewMinutes,
 } from '@/store/projectStore'
+
+type FilterType = 'all' | 'approved' | 'pending' | 'risk'
 
 function MaskStatusBadge({ level }: { level: KeywordMaskStatus['level'] }) {
   const config = {
@@ -207,13 +215,24 @@ function ReviewSummary({ reviewStatus }: { reviewStatus: Record<string, ReviewSt
 }
 
 export default function SolutionPreview() {
-  const { getCurrentProject, exportProject, setSegmentNote, setPathNote, setReviewStatus } =
+  const { getCurrentProject, exportProject, setSegmentNote, setPathNote, setReviewStatus, generateReviewMinutes } =
     useProjectStore()
   const proj = getCurrentProject()
   const exported = exportProject() as Record<string, unknown>
 
   const [meetingMode, setMeetingMode] = useState(false)
   const [cardIndex, setCardIndex] = useState(0)
+  const [filter, setFilter] = useState<FilterType>('all')
+  const [minutesExpanded, setMinutesExpanded] = useState(false)
+  const [minutesTab, setMinutesTab] = useState<keyof ReviewMinutes['todoByCategory']>('narrative')
+  const minutesRef = useRef<HTMLDivElement>(null)
+
+  const handleFilterChange = (newFilter: FilterType) => {
+    setFilter(newFilter)
+    if (meetingMode) {
+      setCardIndex(0)
+    }
+  }
 
   const allMasks = proj.segmentMasks.flatMap((sm) => sm.masks)
   const maskedCount = allMasks.filter((m) => m.level === 'masked').length
@@ -245,16 +264,32 @@ export default function SolutionPreview() {
     setReviewStatus(id, status)
   }
 
-  const cardIds = [
+  const matchesFilter = (itemId: string) => {
+    if (filter === 'all') return true
+    return proj.reviewStatus[itemId] === filter
+  }
+
+  const allCardIds = [
     'scene-info',
     ...proj.segments.map((s) => s.id),
     ...proj.reasoningPaths.map((rp) => rp.id),
   ]
+  const filteredCardIds = allCardIds.filter(matchesFilter)
+  const cardIds = meetingMode ? filteredCardIds : allCardIds
   const totalCards = cardIds.length
   const currentCardId = cardIds[cardIndex] || 'scene-info'
 
   const goToPrev = () => setCardIndex((i) => Math.max(0, i - 1))
   const goToNext = () => setCardIndex((i) => Math.min(totalCards - 1, i + 1))
+
+  const scrollToMinutes = () => {
+    minutesRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }
+
+  const handleExportMinutes = () => {
+    exportProject()
+    console.log('评审纪要已导出')
+  }
 
   const renderSceneInfoCard = () => (
     <div className="border border-border rounded-sm bg-panel/50 overflow-hidden">
@@ -721,12 +756,12 @@ export default function SolutionPreview() {
           <h3 className="font-mono text-xs text-fgdim tracking-widest uppercase">广播文本概览</h3>
         </div>
         <div className="divide-y divide-border">
-          {proj.segments.length === 0 ? (
+          {proj.segments.filter((s) => matchesFilter(s.id)).length === 0 ? (
             <div className="p-6 text-center text-sm text-muted">
               暂无广播片段，请先在"频段草稿"中生成
             </div>
           ) : (
-            proj.segments.map((seg) => {
+            proj.segments.filter((s) => matchesFilter(s.id)).map((seg) => {
               const mask = proj.segmentMasks.find((sm) => sm.segmentId === seg.id)
               const notes = proj.segmentNotes[seg.id] || { narrative: '', audio: '', levelDesign: '' }
               const hasNotes = notes.narrative || notes.audio || notes.levelDesign
@@ -844,13 +879,13 @@ export default function SolutionPreview() {
             <h3 className="font-mono text-xs text-fgdim tracking-widest uppercase">推理路径</h3>
           </div>
           <div className="p-4">
-            {proj.reasoningPaths.length === 0 ? (
+            {proj.reasoningPaths.filter((rp) => matchesFilter(rp.id)).length === 0 ? (
               <p className="text-sm text-muted italic text-center py-4">
                 暂无推理路径，请先在"解谜校验"中生成
               </p>
             ) : (
               <div className="space-y-3 max-h-64 overflow-y-auto">
-                {proj.reasoningPaths.map((rp) => {
+                {proj.reasoningPaths.filter((rp) => matchesFilter(rp.id)).map((rp) => {
                   const notes = proj.pathNotes[rp.id] || { narrative: '', audio: '', levelDesign: '' }
                   const hasNotes = notes.narrative || notes.audio || notes.levelDesign
                   return (
@@ -1063,6 +1098,13 @@ export default function SolutionPreview() {
           </button>
         </div>
         <div className="flex items-center gap-3">
+          <button
+            onClick={scrollToMinutes}
+            className="flex items-center gap-1 px-3 py-1.5 text-xs font-mono bg-amber/15 text-amber border border-amber/30 rounded-sm hover:bg-amber/25 transition-colors"
+          >
+            <ClipboardList className="w-3.5 h-3.5" />
+            生成纪要
+          </button>
           <div className="flex gap-1 flex-wrap">
             {cardIds.map((id, i) => (
               <button
@@ -1103,6 +1145,7 @@ export default function SolutionPreview() {
           onClick={() => {
             setMeetingMode(!meetingMode)
             setCardIndex(0)
+            setMinutesExpanded(false)
           }}
           className={`flex items-center gap-2 px-3 py-1.5 text-xs font-mono border rounded-sm transition-colors ${
             meetingMode
@@ -1115,7 +1158,135 @@ export default function SolutionPreview() {
         </button>
       </div>
 
+      <div className="flex items-center gap-2 py-2">
+        <div className="flex items-center gap-2">
+          <Filter className="w-4 h-4 text-amber" />
+          <span className="text-xs font-mono text-fgdim">筛选</span>
+        </div>
+        <div className="flex gap-1">
+          <button
+            onClick={() => handleFilterChange('all')}
+            className={`flex items-center gap-1 px-3 py-1 text-xs font-mono rounded-sm border transition-colors ${
+              filter === 'all'
+                ? 'bg-amber/15 text-amber border-amber/30'
+                : 'bg-void/50 text-fgdim border-border hover:border-amber/20 hover:text-amber'
+            }`}
+          >
+            全部
+          </button>
+          <button
+            onClick={() => handleFilterChange('approved')}
+            className={`flex items-center gap-1 px-3 py-1 text-xs font-mono rounded-sm border transition-colors ${
+              filter === 'approved'
+                ? 'bg-safe/15 text-safe-glow border-safe/30'
+                : 'bg-void/50 text-fgdim border-border hover:border-safe/20 hover:text-safe-glow'
+            }`}
+          >
+            通过
+          </button>
+          <button
+            onClick={() => handleFilterChange('pending')}
+            className={`flex items-center gap-1 px-3 py-1 text-xs font-mono rounded-sm border transition-colors ${
+              filter === 'pending'
+                ? 'bg-warn/15 text-warn-glow border-warn/30'
+                : 'bg-void/50 text-fgdim border-border hover:border-warn/20 hover:text-warn-glow'
+            }`}
+          >
+            待改
+          </button>
+          <button
+            onClick={() => handleFilterChange('risk')}
+            className={`flex items-center gap-1 px-3 py-1 text-xs font-mono rounded-sm border transition-colors ${
+              filter === 'risk'
+                ? 'bg-danger/15 text-danger-glow border-danger/30'
+                : 'bg-void/50 text-fgdim border-border hover:border-danger/20 hover:text-danger-glow'
+            }`}
+          >
+            风险
+          </button>
+        </div>
+      </div>
+
       {meetingMode ? renderMeetingMode() : renderOverview()}
+
+      <div ref={minutesRef} className="border border-border rounded-sm bg-panel/30 overflow-hidden">
+        <button
+          onClick={() => setMinutesExpanded(!minutesExpanded)}
+          className="w-full flex items-center justify-between px-4 py-2 bg-surface/80 border-b border-border hover:bg-surface/60 transition-colors"
+        >
+          <div className="flex items-center gap-2">
+            <FileText className="w-4 h-4 text-amber" />
+            <h3 className="font-mono text-xs text-fgdim tracking-widest uppercase">评审纪要</h3>
+          </div>
+          {minutesExpanded ? (
+            <ChevronUp className="w-4 h-4 text-fgdim" />
+          ) : (
+            <ChevronDown className="w-4 h-4 text-fgdim" />
+          )}
+        </button>
+        {minutesExpanded && (
+          <div className="p-4">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex gap-1">
+                {([
+                  { key: 'narrative', label: '编剧待办', icon: ClipboardList },
+                  { key: 'audio', label: '音频待办', icon: Mic },
+                  { key: 'levelDesign', label: '关卡待办', icon: MapPin },
+                ] as const).map(({ key, label, icon: Icon }) => (
+                  <button
+                    key={key}
+                    onClick={() => setMinutesTab(key)}
+                    className={`flex items-center gap-1 px-3 py-1.5 text-xs font-mono rounded-sm border transition-colors ${
+                      minutesTab === key
+                        ? 'bg-amber/15 text-amber border-amber/30'
+                        : 'bg-void/50 text-fgdim border-border hover:border-amber/20 hover:text-amber'
+                    }`}
+                  >
+                    <Icon className="w-3.5 h-3.5" />
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={handleExportMinutes}
+                className="flex items-center gap-1 px-3 py-1.5 text-xs font-mono bg-amber/15 text-amber border border-amber/30 rounded-sm hover:bg-amber/25 transition-colors"
+              >
+                <Download className="w-3.5 h-3.5" />
+                导出纪要
+              </button>
+            </div>
+            {(() => {
+              const minutes = generateReviewMinutes()
+              const todos = minutes.todoByCategory[minutesTab]
+              if (todos.length === 0) {
+                return <p className="text-sm text-muted italic text-center py-4">暂无待办事项</p>
+              }
+              return (
+                <div className="space-y-2 max-h-64 overflow-y-auto">
+                  {todos.map((todo, i) => (
+                    <div key={i} className="border border-border rounded-sm bg-void/30 p-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-mono text-fgdim">
+                            {todo.itemType === 'segment' ? '广播片段' : '推理路径'}
+                          </span>
+                          <span className="text-sm font-sans text-fg">{todo.itemTitle}</span>
+                        </div>
+                        <ReviewBadge status={todo.status} />
+                      </div>
+                      {todo.notes[minutesTab] && (
+                        <p className="text-xs text-fgdim bg-panel/50 rounded-sm p-2 border border-border/50">
+                          {todo.notes[minutesTab]}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )
+            })()}
+          </div>
+        )}
+      </div>
     </div>
   )
 }

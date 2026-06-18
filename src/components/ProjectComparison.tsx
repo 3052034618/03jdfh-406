@@ -1,6 +1,6 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useProjectStore, SCENE_LABELS, type ProjectState } from '@/store/projectStore'
-import { GitCompare, Volume2, CheckCircle2, XCircle, Brain, AlertTriangle, Trophy } from 'lucide-react'
+import { GitCompare, Volume2, CheckCircle2, XCircle, Brain, AlertTriangle, Trophy, ChevronDown, ChevronUp, Radio, ExternalLink, Download, FileText } from 'lucide-react'
 
 interface ProjectMetrics {
   id: string
@@ -111,8 +111,26 @@ function ComparisonBar({
 }
 
 export default function ProjectComparison() {
-  const { projects } = useProjectStore()
+  const { projects, switchProject, setActivePanel, exportProject } = useProjectStore()
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const projectList = Object.values(projects)
+
+  const toggleExpand = (id: string) => {
+    setExpanded((prev) => ({ ...prev, [id]: !prev[id] }))
+  }
+
+  const handleExport = (projectId: string) => {
+    const data = exportProject(projectId)
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `project-${projectId.slice(0, 8)}.json`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
 
   const { metrics, recommendedId } = useMemo(() => {
     const metrics = projectList.map(computeMetrics)
@@ -162,6 +180,39 @@ export default function ProjectComparison() {
       <div className="grid gap-4" style={{ gridTemplateColumns: `repeat(${metrics.length}, minmax(0, 1fr))` }}>
         {metrics.map((m) => {
           const isRec = m.id === recommendedId
+          const isExpanded = expanded[m.id] || false
+          const project = projects[m.id]
+          const ChevronIcon = isExpanded ? ChevronUp : ChevronDown
+
+          const displaySegments = project?.segments?.slice(0, 3) || []
+          const allAudibleFragments = project?.segmentMasks?.flatMap((sm) => sm.audibleFragments || []).slice(0, 8) || []
+          const uniqueAudibleFragments = [...new Set(allAudibleFragments)]
+
+          const riskItems: { id: string; title: string; notes: string }[] = []
+          if (project) {
+            Object.entries(project.reviewStatus).forEach(([itemId, status]) => {
+              if (status !== 'risk') return
+              const segment = project.segments.find((s) => s.id === itemId)
+              const path = project.reasoningPaths.find((p) => p.id === itemId)
+              const notes = project.segmentNotes[itemId] || project.pathNotes[itemId]
+              const allNotes = notes ? [notes.narrative, notes.audio, notes.levelDesign].filter(Boolean).join('；') : ''
+
+              if (segment) {
+                riskItems.push({
+                  id: itemId,
+                  title: `频段 ${segment.index}`,
+                  notes: allNotes,
+                })
+              } else if (path) {
+                riskItems.push({
+                  id: itemId,
+                  title: path.isCorrect ? `正确路径：${path.conclusion}` : `误导路径：${path.conclusion}`,
+                  notes: allNotes,
+                })
+              }
+            })
+          }
+
           return (
             <div
               key={m.id}
@@ -178,9 +229,17 @@ export default function ProjectComparison() {
                 </div>
               )}
 
-              <div>
-                <h3 className="font-sans text-sm text-fg font-semibold truncate">{m.projectName}</h3>
-                <span className="font-mono text-xs text-fgdim">{m.sceneLabel}</span>
+              <div
+                className="flex items-start justify-between cursor-pointer select-none"
+                onClick={() => toggleExpand(m.id)}
+              >
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-sans text-sm text-fg font-semibold truncate">{m.projectName}</h3>
+                  </div>
+                  <span className="font-mono text-xs text-fgdim">{m.sceneLabel}</span>
+                </div>
+                <ChevronIcon className={`w-4 h-4 text-fgdim transition-transform duration-300 ${isExpanded ? 'rotate-0' : ''}`} />
               </div>
 
               <div className="space-y-2">
@@ -236,6 +295,102 @@ export default function ProjectComparison() {
               <div className="flex items-center justify-between pt-2 border-t border-border/50">
                 <span className="font-mono text-xs text-fgdim">综合评分</span>
                 <span className="font-mono text-sm text-amber font-bold">{m.score.toFixed(1)}</span>
+              </div>
+
+              <div className={`overflow-hidden transition-all duration-300 ${isExpanded ? 'max-h-[800px]' : 'max-h-0'}`}>
+                <div className="bg-panel/50 border-t border-border/50 mt-3 pt-3 space-y-4">
+                  {displaySegments.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Radio className="w-3.5 h-3.5 text-amber" />
+                        <span className="font-mono text-xs text-amber uppercase tracking-wider">关键广播片段</span>
+                      </div>
+                      <div className="space-y-1.5">
+                        {displaySegments.map((seg) => {
+                          const status = project.reviewStatus[seg.id]
+                          const truncatedText = seg.text.length > 60 ? seg.text.slice(0, 60) + '…' : seg.text
+                          return (
+                            <div key={seg.id} className="flex items-start gap-2">
+                              <span className="font-mono text-xs text-fgdim w-6 shrink-0">#{seg.index}</span>
+                              <span className="font-sans text-xs text-fg flex-1">{truncatedText}</span>
+                              {status === 'approved' && (
+                                <span className="px-1.5 py-0.5 rounded-sm bg-safe/15 text-safe text-[10px] font-mono shrink-0">已审</span>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {uniqueAudibleFragments.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Volume2 className="w-3.5 h-3.5 text-amber" />
+                        <span className="font-mono text-xs text-amber uppercase tracking-wider">可听片段</span>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {uniqueAudibleFragments.map((frag, idx) => (
+                          <span key={idx} className="px-2 py-0.5 rounded-sm bg-amber/15 text-amber text-xs font-mono">
+                            {frag}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {riskItems.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <AlertTriangle className="w-3.5 h-3.5 text-danger" />
+                        <span className="font-mono text-xs text-amber uppercase tracking-wider">风险备注</span>
+                      </div>
+                      <div className="space-y-2">
+                        {riskItems.map((item) => (
+                          <div key={item.id} className="bg-danger/10 border border-danger/30 rounded-sm p-2">
+                            <div className="flex items-start gap-2">
+                              <AlertTriangle className="w-3.5 h-3.5 text-danger shrink-0 mt-0.5" />
+                              <div className="flex-1">
+                                <span className="font-sans text-xs text-fg font-medium">{item.title}</span>
+                                {item.notes && (
+                                  <p className="font-sans text-xs text-fgdim mt-1">{item.notes}</p>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex gap-2 pt-1">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        switchProject(m.id)
+                        setActivePanel('draft')
+                      }}
+                      className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-sm text-xs font-mono
+                        bg-amber/10 text-amber border border-amber/30
+                        hover:bg-amber/20 hover:border-amber/50 transition-all duration-200"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      切换方案
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleExport(m.id)
+                      }}
+                      className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-sm text-xs font-mono
+                        bg-panel text-fg border border-border
+                        hover:bg-panel/80 hover:border-fgdim/50 transition-all duration-200"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      导出此方案
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
           )
