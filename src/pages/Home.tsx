@@ -3,6 +3,7 @@ import FrequencyDraft from '@/components/FrequencyDraft'
 import NoiseLayer from '@/components/NoiseLayer'
 import PuzzleVerify from '@/components/PuzzleVerify'
 import SolutionPreview from '@/components/SolutionPreview'
+import ProjectComparison from '@/components/ProjectComparison'
 import { useProjectStore } from '@/store/projectStore'
 
 export default function Home() {
@@ -18,6 +19,7 @@ export default function Home() {
           {activePanel === 'noise' && <NoiseLayer />}
           {activePanel === 'verify' && <PuzzleVerify />}
           {activePanel === 'preview' && <SolutionPreview />}
+          {activePanel === 'compare' && <ProjectComparison />}
         </main>
         <footer className="flex items-center justify-between px-6 py-2 border-t border-border bg-surface/50">
           <span className="font-mono text-xs text-muted">

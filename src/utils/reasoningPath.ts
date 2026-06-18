@@ -7,7 +7,6 @@ export function generateReasoningPathsFromMasks(
   misleadingAnswers: string[]
 ): ReasoningPath[] {
   const { clear, partial } = getGlobalAudibleFragments(segmentMasks)
-  const { masked } = getGlobalAudibleFragments(segmentMasks)
 
   const audibleFragments = [...clear, ...partial]
   const paths: ReasoningPath[] = []
@@ -32,12 +31,11 @@ export function generateReasoningPathsFromMasks(
 
   for (const misleading of misleadingAnswers) {
     if (!misleading) continue
-    const fragmentPool = [...audibleFragments, ...masked.slice(0, 2)]
-    if (fragmentPool.length === 0) continue
+    if (audibleFragments.length === 0) continue
 
     const numFragments = 2 + Math.floor(Math.random() * 2)
     const fragments: string[] = []
-    const availablePool = [...fragmentPool]
+    const availablePool = [...audibleFragments]
     for (let i = 0; i < numFragments && availablePool.length > 0; i++) {
       const idx = Math.floor(Math.random() * availablePool.length)
       fragments.push(availablePool.splice(idx, 1)[0])
@@ -106,7 +104,6 @@ export function generateReasoningPaths(
 ): ReasoningPath[] {
   const clear = keywordMasks.filter((m) => m.level === 'clear').map((m) => m.keyword)
   const partial = keywordMasks.filter((m) => m.level === 'partial').map((m) => m.keyword)
-  const masked = keywordMasks.filter((m) => m.level === 'masked').map((m) => m.keyword)
 
   const audibleFragments = [...clear, ...partial]
   const paths: ReasoningPath[] = []
@@ -131,12 +128,11 @@ export function generateReasoningPaths(
 
   for (const misleading of misleadingAnswers) {
     if (!misleading) continue
-    const fragmentPool = [...audibleFragments, ...masked.slice(0, 2)]
-    if (fragmentPool.length === 0) continue
+    if (audibleFragments.length === 0) continue
 
     const numFragments = 2 + Math.floor(Math.random() * 2)
     const fragments: string[] = []
-    const availablePool = [...fragmentPool]
+    const availablePool = [...audibleFragments]
     for (let i = 0; i < numFragments && availablePool.length > 0; i++) {
       const idx = Math.floor(Math.random() * availablePool.length)
       fragments.push(availablePool.splice(idx, 1)[0])

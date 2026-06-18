@@ -38,7 +38,15 @@ export interface ReasoningPath {
   difficulty: number
 }
 
-export type PanelType = 'draft' | 'noise' | 'verify' | 'preview'
+export type ReviewStatus = 'approved' | 'pending' | 'risk'
+
+export interface ItemNotes {
+  narrative: string
+  audio: string
+  levelDesign: string
+}
+
+export type PanelType = 'draft' | 'noise' | 'verify' | 'preview' | 'compare'
 export type SceneLocation = 'abandoned_hospital' | 'midnight_highway' | 'underground_station' | 'lighthouse' | 'cabin' | 'custom'
 export type BroadcastTone = 'official' | 'personal' | 'emergency' | 'mechanical' | 'ritual'
 
@@ -58,6 +66,9 @@ export interface ProjectState {
   correctClueChain: string
   misleadingAnswers: string[]
   reasoningPaths: ReasoningPath[]
+  segmentNotes: Record<string, ItemNotes>
+  pathNotes: Record<string, ItemNotes>
+  reviewStatus: Record<string, ReviewStatus>
   createdAt: string
   updatedAt: string
 }
@@ -90,6 +101,9 @@ interface ProjectStore extends ProjectState {
   removeMisleadingAnswer: (index: number) => void
   setReasoningPaths: (paths: ReasoningPath[]) => void
   setActivePanel: (panel: PanelType) => void
+  setSegmentNote: (segmentId: string, category: keyof ItemNotes, text: string) => void
+  setPathNote: (pathId: string, category: keyof ItemNotes, text: string) => void
+  setReviewStatus: (itemId: string, status: ReviewStatus) => void
   exportProject: (projectId?: string) => object
 }
 
@@ -148,6 +162,9 @@ function createDefaultProject(name: string): ProjectState {
     correctClueChain: '',
     misleadingAnswers: [],
     reasoningPaths: [],
+    segmentNotes: {},
+    pathNotes: {},
+    reviewStatus: {},
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   }
@@ -533,6 +550,53 @@ export const useProjectStore = create<ProjectStore>()(
 
       setActivePanel: (panel) => set({ activePanel: panel }),
 
+      setSegmentNote: (segmentId, category, text) => {
+        const state = get()
+        const id = state.currentProjectId
+        const proj = state.projects[id]
+        const existing = proj.segmentNotes[segmentId] || { narrative: '', audio: '', levelDesign: '' }
+        const updatedProject = {
+          ...proj,
+          segmentNotes: { ...proj.segmentNotes, [segmentId]: { ...existing, [category]: text } },
+          updatedAt: new Date().toISOString(),
+        }
+        set({
+          ...updatedProject,
+          projects: { ...state.projects, [id]: updatedProject },
+        })
+      },
+
+      setPathNote: (pathId, category, text) => {
+        const state = get()
+        const id = state.currentProjectId
+        const proj = state.projects[id]
+        const existing = proj.pathNotes[pathId] || { narrative: '', audio: '', levelDesign: '' }
+        const updatedProject = {
+          ...proj,
+          pathNotes: { ...proj.pathNotes, [pathId]: { ...existing, [category]: text } },
+          updatedAt: new Date().toISOString(),
+        }
+        set({
+          ...updatedProject,
+          projects: { ...state.projects, [id]: updatedProject },
+        })
+      },
+
+      setReviewStatus: (itemId, status) => {
+        const state = get()
+        const id = state.currentProjectId
+        const proj = state.projects[id]
+        const updatedProject = {
+          ...proj,
+          reviewStatus: { ...proj.reviewStatus, [itemId]: status },
+          updatedAt: new Date().toISOString(),
+        }
+        set({
+          ...updatedProject,
+          projects: { ...state.projects, [id]: updatedProject },
+        })
+      },
+
       exportProject: (projectId) => {
         const state = get()
         const id = projectId || state.currentProjectId
@@ -556,9 +620,12 @@ export const useProjectStore = create<ProjectStore>()(
           },
           playerClues: proj.playerClues,
           broadcastSegments: proj.segments.map((s) => ({
+            id: s.id,
             index: s.index,
             originalText: s.text,
             keywords: s.keywords,
+            notes: proj.segmentNotes[s.id] || null,
+            reviewStatus: proj.reviewStatus[s.id] || null,
           })),
           noiseLayer: {
             rain: proj.noiseConfig.rain,
@@ -572,7 +639,7 @@ export const useProjectStore = create<ProjectStore>()(
             audibleFragments: sm.audibleFragments,
             keywordMasks: sm.masks.map((m) => ({
               keyword: m.keyword,
-              probability: m.probability,
+              probability: Math.round(m.probability * 100),
               level: m.level,
             })),
           })),
@@ -589,12 +656,20 @@ export const useProjectStore = create<ProjectStore>()(
             misleadingAnswers: proj.misleadingAnswers,
           },
           reasoningPaths: proj.reasoningPaths.map((rp) => ({
+            id: rp.id,
             conclusion: rp.conclusion,
             isCorrect: rp.isCorrect,
             fragments: rp.fragments,
             steps: rp.steps,
             difficulty: rp.difficulty,
+            notes: proj.pathNotes[rp.id] || null,
+            reviewStatus: proj.reviewStatus[rp.id] || null,
           })),
+          reviewSummary: {
+            approved: Object.entries(proj.reviewStatus).filter(([, v]) => v === 'approved').map(([k]) => k),
+            pending: Object.entries(proj.reviewStatus).filter(([, v]) => v === 'pending').map(([k]) => k),
+            risk: Object.entries(proj.reviewStatus).filter(([, v]) => v === 'risk').map(([k]) => k),
+          },
           reviewerNotes: {
             forDesigner: `场景：${SCENE_LABELS[proj.sceneLocation]} | 年代：${ERA_LABELS[proj.era]} | 口吻：${TONE_LABELS[proj.broadcastTone]} | 干扰等级：${proj.interferenceLevel}`,
             forNarrative: `玩家已知线索：${proj.playerClues || '无'}；正确答案：${proj.correctAnswer || '未设置'}；误导答案：${proj.misleadingAnswers.length} 个`,

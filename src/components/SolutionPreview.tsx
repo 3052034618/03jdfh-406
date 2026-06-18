@@ -1,5 +1,6 @@
+import { useState } from 'react'
 import {
-  FileText,
+  Eye,
   MapPin,
   Calendar,
   Radio,
@@ -11,8 +12,15 @@ import {
   Users,
   Mic,
   Lightbulb,
-  Eye,
   Clock,
+  FileText,
+  ChevronLeft,
+  ChevronRight,
+  MessageSquare,
+  ThumbsUp,
+  AlertCircle,
+  MinusCircle,
+  PenLine,
 } from 'lucide-react'
 import {
   useProjectStore,
@@ -20,6 +28,8 @@ import {
   TONE_LABELS,
   ERA_LABELS,
   type KeywordMaskStatus,
+  type ReviewStatus,
+  type ItemNotes,
 } from '@/store/projectStore'
 
 function MaskStatusBadge({ level }: { level: KeywordMaskStatus['level'] }) {
@@ -45,16 +55,170 @@ function MaskStatusBadge({ level }: { level: KeywordMaskStatus['level'] }) {
   )
 }
 
+function ReviewBadge({ status }: { status?: ReviewStatus }) {
+  if (!status) return null
+  const cfg = {
+    approved: { label: '通过', className: 'bg-safe/15 text-safe-glow border-safe/30' },
+    pending: { label: '待改', className: 'bg-warn/15 text-warn-glow border-warn/30' },
+    risk: { label: '风险', className: 'bg-danger/15 text-danger-glow border-danger/30' },
+  }
+  const { label, className } = cfg[status]
+  return (
+    <span className={`px-2 py-0.5 text-xs font-mono rounded-sm border ${className}`}>
+      {label}
+    </span>
+  )
+}
+
+function ReviewButtons({
+  itemId,
+  currentStatus,
+  onSetStatus,
+}: {
+  itemId: string
+  currentStatus?: ReviewStatus
+  onSetStatus: (id: string, status: ReviewStatus) => void
+}) {
+  return (
+    <div className="flex gap-1">
+      <button
+        onClick={() => onSetStatus(itemId, 'approved')}
+        className={`flex items-center gap-1 px-2 py-1 text-xs font-mono rounded-sm border transition-colors ${
+          currentStatus === 'approved'
+            ? 'bg-safe/20 text-safe-glow border-safe/40'
+            : 'bg-void/50 text-fgdim border-border hover:border-safe/30 hover:text-safe-glow'
+        }`}
+      >
+        <ThumbsUp className="w-3 h-3" />
+        通过
+      </button>
+      <button
+        onClick={() => onSetStatus(itemId, 'pending')}
+        className={`flex items-center gap-1 px-2 py-1 text-xs font-mono rounded-sm border transition-colors ${
+          currentStatus === 'pending'
+            ? 'bg-warn/20 text-warn-glow border-warn/40'
+            : 'bg-void/50 text-fgdim border-border hover:border-warn/30 hover:text-warn-glow'
+        }`}
+      >
+        <MinusCircle className="w-3 h-3" />
+        待改
+      </button>
+      <button
+        onClick={() => onSetStatus(itemId, 'risk')}
+        className={`flex items-center gap-1 px-2 py-1 text-xs font-mono rounded-sm border transition-colors ${
+          currentStatus === 'risk'
+            ? 'bg-danger/20 text-danger-glow border-danger/40'
+            : 'bg-void/50 text-fgdim border-border hover:border-danger/30 hover:text-danger-glow'
+        }`}
+      >
+        <AlertCircle className="w-3 h-3" />
+        风险
+      </button>
+    </div>
+  )
+}
+
+function NoteEditor({
+  itemId,
+  notes,
+  onSetNote,
+}: {
+  itemId: string
+  notes: ItemNotes
+  onSetNote: (id: string, category: keyof ItemNotes, text: string) => void
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const [activeTab, setActiveTab] = useState<keyof ItemNotes>('narrative')
+
+  const tabs: { key: keyof ItemNotes; label: string; icon: typeof PenLine }[] = [
+    { key: 'narrative', label: '编剧', icon: MessageSquare },
+    { key: 'audio', label: '音频', icon: Volume2 },
+    { key: 'levelDesign', label: '关卡', icon: MapPin },
+  ]
+
+  const hasNotes = notes.narrative || notes.audio || notes.levelDesign
+
+  return (
+    <div className="mt-3 border-t border-border/50 pt-2">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex items-center gap-2 text-xs font-mono text-fgdim hover:text-amber transition-colors"
+      >
+        <PenLine className="w-3 h-3" />
+        <span>备注</span>
+        {hasNotes && <span className="w-1.5 h-1.5 rounded-full bg-amber" />}
+        <ChevronRight className={`w-3 h-3 transition-transform ${expanded ? 'rotate-90' : ''}`} />
+      </button>
+      {expanded && (
+        <div className="mt-2">
+          <div className="flex gap-1 mb-2">
+            {tabs.map(({ key, label, icon: Icon }) => (
+              <button
+                key={key}
+                onClick={() => setActiveTab(key)}
+                className={`flex items-center gap-1 px-2 py-1 text-xs font-mono rounded-sm border transition-colors ${
+                  activeTab === key
+                    ? 'bg-amber/15 text-amber border-amber/30'
+                    : 'bg-void/50 text-fgdim border-border hover:border-amber/20'
+                }`}
+              >
+                <Icon className="w-3 h-3" />
+                {label}
+                {notes[key] && <span className="w-1 h-1 rounded-full bg-amber/60" />}
+              </button>
+            ))}
+          </div>
+          <textarea
+            value={notes[activeTab]}
+            onChange={(e) => onSetNote(itemId, activeTab, e.target.value)}
+            placeholder={`输入${tabs.find((t) => t.key === activeTab)?.label}备注...`}
+            className="w-full h-20 px-2 py-1.5 text-xs font-sans bg-void/50 border border-border rounded-sm text-fg placeholder:text-muted/50 focus:outline-none focus:border-amber/40 resize-none"
+          />
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ReviewSummary({ reviewStatus }: { reviewStatus: Record<string, ReviewStatus> }) {
+  const counts = Object.values(reviewStatus).reduce(
+    (acc, s) => {
+      acc[s] = (acc[s] || 0) + 1
+      return acc
+    },
+    { approved: 0, pending: 0, risk: 0 } as Record<ReviewStatus, number>
+  )
+  return (
+    <div className="flex gap-2">
+      <span className="flex items-center gap-1 px-2 py-0.5 text-xs font-mono bg-safe/15 text-safe-glow rounded-sm border border-safe/30">
+        <CheckCircle2 className="w-3 h-3" />
+        {counts.approved}
+      </span>
+      <span className="flex items-center gap-1 px-2 py-0.5 text-xs font-mono bg-warn/15 text-warn-glow rounded-sm border border-warn/30">
+        <MinusCircle className="w-3 h-3" />
+        {counts.pending}
+      </span>
+      <span className="flex items-center gap-1 px-2 py-0.5 text-xs font-mono bg-danger/15 text-danger-glow rounded-sm border border-danger/30">
+        <AlertCircle className="w-3 h-3" />
+        {counts.risk}
+      </span>
+    </div>
+  )
+}
+
 export default function SolutionPreview() {
-  const { getCurrentProject, exportProject } = useProjectStore()
+  const { getCurrentProject, exportProject, setSegmentNote, setPathNote, setReviewStatus } =
+    useProjectStore()
   const proj = getCurrentProject()
   const exported = exportProject() as Record<string, unknown>
+
+  const [meetingMode, setMeetingMode] = useState(false)
+  const [cardIndex, setCardIndex] = useState(0)
 
   const allMasks = proj.segmentMasks.flatMap((sm) => sm.masks)
   const maskedCount = allMasks.filter((m) => m.level === 'masked').length
   const partialCount = allMasks.filter((m) => m.level === 'partial').length
   const clearCount = allMasks.filter((m) => m.level === 'clear').length
-
   const correctPaths = proj.reasoningPaths.filter((rp) => rp.isCorrect).length
   const misleadingPaths = proj.reasoningPaths.filter((rp) => !rp.isCorrect).length
 
@@ -69,16 +233,329 @@ export default function SolutionPreview() {
     })
   }
 
-  return (
-    <div className="panel-enter space-y-6">
-      <div className="flex items-center gap-3 mb-2">
-        <div className="flex items-center gap-2">
-          <Eye className="w-4 h-4 text-amber" />
-          <h2 className="font-mono text-lg text-amber tracking-wide">方案预览</h2>
-        </div>
-        <div className="h-px flex-1 bg-gradient-to-r from-amber/30 to-transparent" />
-      </div>
+  const handleSetSegmentNote = (id: string, category: keyof ItemNotes, text: string) => {
+    setSegmentNote(id, category, text)
+  }
 
+  const handleSetPathNote = (id: string, category: keyof ItemNotes, text: string) => {
+    setPathNote(id, category, text)
+  }
+
+  const handleSetReviewStatus = (id: string, status: ReviewStatus) => {
+    setReviewStatus(id, status)
+  }
+
+  const cardIds = [
+    'scene-info',
+    ...proj.segments.map((s) => s.id),
+    ...proj.reasoningPaths.map((rp) => rp.id),
+  ]
+  const totalCards = cardIds.length
+  const currentCardId = cardIds[cardIndex] || 'scene-info'
+
+  const goToPrev = () => setCardIndex((i) => Math.max(0, i - 1))
+  const goToNext = () => setCardIndex((i) => Math.min(totalCards - 1, i + 1))
+
+  const renderSceneInfoCard = () => (
+    <div className="border border-border rounded-sm bg-panel/50 overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-2 bg-surface/80 border-b border-border">
+        <div className="flex items-center gap-2">
+          <MapPin className="w-4 h-4 text-amber" />
+          <h3 className="font-mono text-xs text-fgdim tracking-widest uppercase">场景信息</h3>
+        </div>
+        <ReviewBadge status={proj.reviewStatus['scene-info']} />
+      </div>
+      <div className="p-4 space-y-4">
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <span className="text-xs font-mono text-muted block mb-1">场景地点</span>
+            <p className="text-lg font-sans text-fg">
+              {proj.sceneLocation === 'custom'
+                ? proj.customSceneName || '自定义场景'
+                : SCENE_LABELS[proj.sceneLocation]}
+            </p>
+          </div>
+          <div>
+            <span className="text-xs font-mono text-muted block mb-1">干扰等级</span>
+            <p className="text-lg font-sans text-fg">LEVEL {proj.interferenceLevel}</p>
+            <div className="flex gap-1 mt-2">
+              {[1, 2, 3, 4, 5].map((level) => (
+                <div
+                  key={level}
+                  className={`h-2 flex-1 rounded-sm ${
+                    proj.interferenceLevel >= level ? 'bg-amber' : 'bg-border'
+                  }`}
+                />
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="flex gap-2">
+          <span className="px-2 py-0.5 text-xs font-mono bg-surface text-fgdim rounded-sm">
+            {ERA_LABELS[proj.era]}
+          </span>
+          <span className="px-2 py-0.5 text-xs font-mono bg-surface text-fgdim rounded-sm">
+            {TONE_LABELS[proj.broadcastTone]}
+          </span>
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <Radio className="w-4 h-4 text-amber" />
+              <span className="font-mono text-xs text-fgdim">广播片段</span>
+            </div>
+            <p className="text-lg font-sans text-fg">{proj.segments.length} 条</p>
+            <div className="flex items-center gap-3 mt-1 text-xs font-mono">
+              <span className="text-safe-glow">
+                <CheckCircle2 className="w-3 h-3 inline mr-1" />
+                关键词 {allMasks.length}
+              </span>
+              <span className="text-danger-glow">
+                <XCircle className="w-3 h-3 inline mr-1" />
+                屏蔽 {maskedCount}
+              </span>
+            </div>
+          </div>
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <Brain className="w-4 h-4 text-amber" />
+              <span className="font-mono text-xs text-fgdim">解谜路径</span>
+            </div>
+            <p className="text-lg font-sans text-fg">
+              {correctPaths} 正确 / {misleadingPaths} 误导
+            </p>
+          </div>
+        </div>
+        <div className="space-y-3 border-t border-border/50 pt-3">
+          <div>
+            <span className="text-xs font-mono text-muted block mb-1">项目名称</span>
+            <p className="text-sm text-fg">{proj.projectName || '未命名项目'}</p>
+          </div>
+          <div>
+            <span className="text-xs font-mono text-muted block mb-1">项目ID</span>
+            <p className="text-sm font-mono text-fgdim">{proj.id}</p>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <Clock className="w-3 h-3 text-muted" />
+              <span className="text-xs font-mono text-muted">创建: {formatDate(proj.createdAt)}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Clock className="w-3 h-3 text-muted" />
+              <span className="text-xs font-mono text-muted">更新: {formatDate(proj.updatedAt)}</span>
+            </div>
+          </div>
+        </div>
+        {proj.playerClues && (
+          <div className="border-t border-border/50 pt-3">
+            <div className="flex items-center gap-2 mb-2">
+              <Lightbulb className="w-4 h-4 text-amber" />
+              <span className="font-mono text-xs text-fgdim">玩家线索</span>
+            </div>
+            <div className="terminal-text text-sm text-fg/90 bg-void/50 border border-border rounded-sm p-3">
+              {proj.playerClues.split(/[,，、\s]+/).filter(Boolean).map((clue, i) => (
+                <span
+                  key={i}
+                  className="inline-block px-2 py-0.5 mr-2 mb-1 bg-amber/10 text-amber/80 rounded-sm"
+                >
+                  {clue}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+        <div className="border-t border-border/50 pt-3">
+          <div className="flex items-center gap-2 mb-2">
+            <AlertTriangle className="w-4 h-4 text-amber" />
+            <span className="font-mono text-xs text-fgdim">噪声配置</span>
+          </div>
+          <div className="space-y-2">
+            {[
+              { key: 'rain', label: '雨声' },
+              { key: 'whiteNoise', label: '白噪' },
+              { key: 'reversedVocal', label: '倒放人声' },
+              { key: 'powerOutage', label: '断电失真' },
+            ].map(({ key, label }) => {
+              const value = proj.noiseConfig[key as keyof typeof proj.noiseConfig]
+              return (
+                <div key={key} className="space-y-1">
+                  <div className="flex justify-between text-xs">
+                    <span className="font-mono text-fgdim">{label}</span>
+                    <span className="font-mono text-amber">{value}%</span>
+                  </div>
+                  <div className="h-1.5 bg-border rounded-sm overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-amber/dim to-amber transition-all"
+                      style={{ width: `${value}%` }}
+                    />
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+        <div className="border-t border-border/50 pt-3">
+          <ReviewButtons
+            itemId="scene-info"
+            currentStatus={proj.reviewStatus['scene-info']}
+            onSetStatus={handleSetReviewStatus}
+          />
+        </div>
+      </div>
+    </div>
+  )
+
+  const renderSegmentCard = (segId: string) => {
+    const seg = proj.segments.find((s) => s.id === segId)
+    if (!seg) return null
+    const mask = proj.segmentMasks.find((sm) => sm.segmentId === seg.id)
+    const notes = proj.segmentNotes[seg.id] || { narrative: '', audio: '', levelDesign: '' }
+    return (
+      <div className="border border-border rounded-sm bg-panel/50 overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-2 bg-surface/80 border-b border-border">
+          <div className="flex items-center gap-2">
+            <Mic className="w-4 h-4 text-amber" />
+            <h3 className="font-mono text-xs text-amber tracking-widest">
+              CH-{String(seg.index).padStart(2, '0')}
+            </h3>
+          </div>
+          <ReviewBadge status={proj.reviewStatus[seg.id]} />
+        </div>
+        <div className="p-4 space-y-3">
+          <div className="flex flex-wrap gap-1">
+            {seg.keywords.slice(0, 5).map((kw) => (
+              <span
+                key={kw}
+                className="px-1.5 py-0.5 text-xs font-mono bg-amber/10 text-amber/80 rounded-sm"
+              >
+                {kw}
+              </span>
+            ))}
+          </div>
+          <p className="terminal-text text-sm text-fg/90 bg-void/50 border border-border rounded-sm p-3">
+            {seg.text}
+          </p>
+          {mask && (
+            <div className="space-y-1">
+              <p className="text-xs font-mono text-fgdim">模拟传输后文本：</p>
+              <p className="terminal-text text-sm text-fg/70 bg-void/30 border border-border/50 rounded-sm p-3">
+                {mask.simulatedText}
+              </p>
+              {mask.masks.length > 0 && (
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {mask.masks.map((m, i) => (
+                    <div key={i} className="flex items-center gap-1">
+                      <span className="text-xs font-mono text-fgdim">{m.keyword}</span>
+                      <MaskStatusBadge level={m.level} />
+                      <span className="text-xs font-mono text-muted">
+                        {Math.round(m.probability * 100)}%
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {mask.audibleFragments.length > 0 && (
+                <div className="mt-2">
+                  <span className="text-xs font-mono text-fgdim">可闻片段：</span>
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {mask.audibleFragments.map((frag, i) => (
+                      <span
+                        key={i}
+                        className="px-1.5 py-0.5 text-xs font-mono bg-safe/15 text-safe-glow rounded-sm"
+                      >
+                        {frag}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          <div className="border-t border-border/50 pt-3">
+            <ReviewButtons
+              itemId={seg.id}
+              currentStatus={proj.reviewStatus[seg.id]}
+              onSetStatus={handleSetReviewStatus}
+            />
+          </div>
+          <NoteEditor itemId={seg.id} notes={notes} onSetNote={handleSetSegmentNote} />
+        </div>
+      </div>
+    )
+  }
+
+  const renderPathCard = (pathId: string) => {
+    const rp = proj.reasoningPaths.find((p) => p.id === pathId)
+    if (!rp) return null
+    const notes = proj.pathNotes[rp.id] || { narrative: '', audio: '', levelDesign: '' }
+    return (
+      <div
+        className={`border rounded-sm bg-panel/50 overflow-hidden ${
+          rp.isCorrect ? 'border-safe/40' : 'border-danger/40'
+        }`}
+      >
+        <div className="flex items-center justify-between px-4 py-2 bg-surface/80 border-b border-border">
+          <div className="flex items-center gap-2">
+            {rp.isCorrect ? (
+              <CheckCircle2 className="w-4 h-4 text-safe-glow" />
+            ) : (
+              <XCircle className="w-4 h-4 text-danger-glow" />
+            )}
+            <h3 className="font-mono text-xs text-fgdim tracking-widest uppercase">
+              推理路径 {rp.isCorrect ? '(正确)' : '(误导)'}
+            </h3>
+          </div>
+          <ReviewBadge status={proj.reviewStatus[rp.id]} />
+        </div>
+        <div className="p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <span className={`text-sm font-sans ${rp.isCorrect ? 'text-safe-glow' : 'text-danger-glow'}`}>
+              {rp.conclusion}
+            </span>
+            <span className="text-xs font-mono text-muted">难度 {rp.difficulty}/5</span>
+          </div>
+          {rp.fragments.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {rp.fragments.map((frag, i) => (
+                <span
+                  key={i}
+                  className="px-1.5 py-0.5 text-xs font-mono bg-amber/10 text-amber/80 rounded-sm"
+                >
+                  {frag}
+                </span>
+              ))}
+            </div>
+          )}
+          <ol className="text-xs text-fgdim space-y-1">
+            {rp.steps.map((step, i) => (
+              <li key={i} className="flex gap-2">
+                <span className="font-mono text-muted">{i + 1}.</span>
+                <span>{step}</span>
+              </li>
+            ))}
+          </ol>
+          <div className="border-t border-border/50 pt-3">
+            <ReviewButtons
+              itemId={rp.id}
+              currentStatus={proj.reviewStatus[rp.id]}
+              onSetStatus={handleSetReviewStatus}
+            />
+          </div>
+          <NoteEditor itemId={rp.id} notes={notes} onSetNote={handleSetPathNote} />
+        </div>
+      </div>
+    )
+  }
+
+  const renderCurrentCard = () => {
+    if (currentCardId === 'scene-info') return renderSceneInfoCard()
+    const segIdx = proj.segments.findIndex((s) => s.id === currentCardId)
+    if (segIdx >= 0) return renderSegmentCard(currentCardId)
+    return renderPathCard(currentCardId)
+  }
+
+  const renderOverview = () => (
+    <div className="space-y-6">
       <div className="grid grid-cols-4 gap-4">
         <div className="border border-border rounded-sm bg-panel/50 p-4">
           <div className="flex items-center gap-2 mb-2">
@@ -251,12 +728,18 @@ export default function SolutionPreview() {
           ) : (
             proj.segments.map((seg) => {
               const mask = proj.segmentMasks.find((sm) => sm.segmentId === seg.id)
+              const notes = proj.segmentNotes[seg.id] || { narrative: '', audio: '', levelDesign: '' }
+              const hasNotes = notes.narrative || notes.audio || notes.levelDesign
               return (
                 <div key={seg.id} className="p-4">
                   <div className="flex items-center justify-between mb-2">
-                    <span className="font-mono text-xs text-amber">
-                      CH-{String(seg.index).padStart(2, '0')}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-xs text-amber">
+                        CH-{String(seg.index).padStart(2, '0')}
+                      </span>
+                      <ReviewBadge status={proj.reviewStatus[seg.id]} />
+                      {hasNotes && <PenLine className="w-3 h-3 text-amber/60" />}
+                    </div>
                     <div className="flex gap-1">
                       {seg.keywords.slice(0, 5).map((kw) => (
                         <span
@@ -284,7 +767,7 @@ export default function SolutionPreview() {
                               <span className="text-xs font-mono text-fgdim">{m.keyword}</span>
                               <MaskStatusBadge level={m.level} />
                               <span className="text-xs font-mono text-muted">
-                                {m.probability}%
+                                {Math.round(m.probability * 100)}%
                               </span>
                             </div>
                           ))}
@@ -307,6 +790,14 @@ export default function SolutionPreview() {
                       )}
                     </div>
                   )}
+                  <div className="mt-3 flex items-center gap-3">
+                    <ReviewButtons
+                      itemId={seg.id}
+                      currentStatus={proj.reviewStatus[seg.id]}
+                      onSetStatus={handleSetReviewStatus}
+                    />
+                  </div>
+                  <NoteEditor itemId={seg.id} notes={notes} onSetNote={handleSetSegmentNote} />
                 </div>
               )
             })
@@ -359,55 +850,71 @@ export default function SolutionPreview() {
               </p>
             ) : (
               <div className="space-y-3 max-h-64 overflow-y-auto">
-                {proj.reasoningPaths.map((rp) => (
-                  <div
-                    key={rp.id}
-                    className={`border rounded-sm p-3 ${
-                      rp.isCorrect
-                        ? 'border-safe/40 bg-safe/5'
-                        : 'border-danger/40 bg-danger/5'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        {rp.isCorrect ? (
-                          <CheckCircle2 className="w-4 h-4 text-safe-glow" />
-                        ) : (
-                          <XCircle className="w-4 h-4 text-danger-glow" />
-                        )}
-                        <span className={`text-sm font-sans ${rp.isCorrect ? 'text-safe-glow' : 'text-danger-glow'}`}>
-                          {rp.conclusion}
-                        </span>
-                      </div>
-                      <span className="text-xs font-mono text-muted">
-                        难度 {rp.difficulty}/5
-                      </span>
-                    </div>
-                    {rp.fragments.length > 0 && (
-                      <div className="flex flex-wrap gap-1 mb-2">
-                        {rp.fragments.map((frag, i) => (
-                          <span
-                            key={i}
-                            className="px-1.5 py-0.5 text-xs font-mono bg-amber/10 text-amber/80 rounded-sm"
-                          >
-                            {frag}
+                {proj.reasoningPaths.map((rp) => {
+                  const notes = proj.pathNotes[rp.id] || { narrative: '', audio: '', levelDesign: '' }
+                  const hasNotes = notes.narrative || notes.audio || notes.levelDesign
+                  return (
+                    <div
+                      key={rp.id}
+                      className={`border rounded-sm p-3 ${
+                        rp.isCorrect
+                          ? 'border-safe/40 bg-safe/5'
+                          : 'border-danger/40 bg-danger/5'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          {rp.isCorrect ? (
+                            <CheckCircle2 className="w-4 h-4 text-safe-glow" />
+                          ) : (
+                            <XCircle className="w-4 h-4 text-danger-glow" />
+                          )}
+                          <span className={`text-sm font-sans ${rp.isCorrect ? 'text-safe-glow' : 'text-danger-glow'}`}>
+                            {rp.conclusion}
                           </span>
-                        ))}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <ReviewBadge status={proj.reviewStatus[rp.id]} />
+                          {hasNotes && <PenLine className="w-3 h-3 text-amber/60" />}
+                          <span className="text-xs font-mono text-muted">
+                            难度 {rp.difficulty}/5
+                          </span>
+                        </div>
                       </div>
-                    )}
-                    <ol className="text-xs text-fgdim space-y-1">
-                      {rp.steps.slice(0, 3).map((step, i) => (
-                        <li key={i} className="flex gap-2">
-                          <span className="font-mono text-muted">{i + 1}.</span>
-                          <span>{step}</span>
-                        </li>
-                      ))}
-                      {rp.steps.length > 3 && (
-                        <li className="text-muted italic">... 共 {rp.steps.length} 步</li>
+                      {rp.fragments.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mb-2">
+                          {rp.fragments.map((frag, i) => (
+                            <span
+                              key={i}
+                              className="px-1.5 py-0.5 text-xs font-mono bg-amber/10 text-amber/80 rounded-sm"
+                            >
+                              {frag}
+                            </span>
+                          ))}
+                        </div>
                       )}
-                    </ol>
-                  </div>
-                ))}
+                      <ol className="text-xs text-fgdim space-y-1">
+                        {rp.steps.slice(0, 3).map((step, i) => (
+                          <li key={i} className="flex gap-2">
+                            <span className="font-mono text-muted">{i + 1}.</span>
+                            <span>{step}</span>
+                          </li>
+                        ))}
+                        {rp.steps.length > 3 && (
+                          <li className="text-muted italic">... 共 {rp.steps.length} 步</li>
+                        )}
+                      </ol>
+                      <div className="mt-2 flex items-center gap-3">
+                        <ReviewButtons
+                          itemId={rp.id}
+                          currentStatus={proj.reviewStatus[rp.id]}
+                          onSetStatus={handleSetReviewStatus}
+                        />
+                      </div>
+                      <NoteEditor itemId={rp.id} notes={notes} onSetNote={handleSetPathNote} />
+                    </div>
+                  )
+                })}
               </div>
             )}
           </div>
@@ -528,6 +1035,87 @@ export default function SolutionPreview() {
           </div>
         </section>
       )}
+    </div>
+  )
+
+  const renderMeetingMode = () => (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={goToPrev}
+            disabled={cardIndex === 0}
+            className="flex items-center gap-1 px-3 py-1.5 text-xs font-mono border rounded-sm transition-colors border-border text-fgdim hover:border-amber/30 hover:text-amber disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            <ChevronLeft className="w-4 h-4" />
+            上一项
+          </button>
+          <span className="font-mono text-sm text-amber">
+            {cardIndex + 1} / {totalCards}
+          </span>
+          <button
+            onClick={goToNext}
+            disabled={cardIndex === totalCards - 1}
+            className="flex items-center gap-1 px-3 py-1.5 text-xs font-mono border rounded-sm transition-colors border-border text-fgdim hover:border-amber/30 hover:text-amber disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            下一项
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="flex gap-1 flex-wrap">
+            {cardIds.map((id, i) => (
+              <button
+                key={id}
+                onClick={() => setCardIndex(i)}
+                className={`w-2 h-2 rounded-full transition-colors ${
+                  i === cardIndex
+                    ? 'bg-amber'
+                    : proj.reviewStatus[id] === 'approved'
+                    ? 'bg-safe-glow'
+                    : proj.reviewStatus[id] === 'risk'
+                    ? 'bg-danger-glow'
+                    : proj.reviewStatus[id] === 'pending'
+                    ? 'bg-warn-glow'
+                    : 'bg-border'
+                }`}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+      {renderCurrentCard()}
+    </div>
+  )
+
+  return (
+    <div className="panel-enter space-y-6">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <Eye className="w-4 h-4 text-amber" />
+            <h2 className="font-mono text-lg text-amber tracking-wide">方案预览</h2>
+          </div>
+          <div className="h-px flex-1 bg-gradient-to-r from-amber/30 to-transparent" />
+          <ReviewSummary reviewStatus={proj.reviewStatus} />
+        </div>
+        <button
+          onClick={() => {
+            setMeetingMode(!meetingMode)
+            setCardIndex(0)
+          }}
+          className={`flex items-center gap-2 px-3 py-1.5 text-xs font-mono border rounded-sm transition-colors ${
+            meetingMode
+              ? 'bg-amber/15 text-amber border-amber/30'
+              : 'bg-void/50 text-fgdim border-border hover:border-amber/30 hover:text-amber'
+          }`}
+        >
+          <Users className="w-3.5 h-3.5" />
+          {meetingMode ? '会议模式' : '会议模式'}
+        </button>
+      </div>
+
+      {meetingMode ? renderMeetingMode() : renderOverview()}
     </div>
   )
 }

@@ -6,6 +6,7 @@ import {
   ChevronRight,
   Activity,
   FileText,
+  GitCompare,
 } from 'lucide-react'
 import ProjectSelector from './ProjectSelector'
 import { useProjectStore, type PanelType } from '@/store/projectStore'
@@ -15,6 +16,7 @@ const PANELS: { key: PanelType; label: string; icon: typeof Radio }[] = [
   { key: 'noise', label: '噪声层', icon: Volume2 },
   { key: 'verify', label: '解谜校验', icon: Puzzle },
   { key: 'preview', label: '方案预览', icon: FileText },
+  { key: 'compare', label: '方案对比', icon: GitCompare },
 ]
 
 export default function Header() {
